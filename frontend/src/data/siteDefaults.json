@@ -1,0 +1,518 @@
+{
+  "brand": {
+    "monogram": "DK",
+    "wordmark": "BADMINTON ACADEMY",
+    "locality": "Selvapuram North",
+    "city": "Coimbatore",
+    "state": "Tamil Nadu",
+    "addressFallback": "Exact street address: To be confirmed",
+    "phoneFallback": "To be confirmed",
+    "emailFallback": "To be confirmed",
+    "openingHoursText": "To be confirmed",
+    "mapsUrl": "https://maps.app.goo.gl/oJsSj7zZhbGtSUY37",
+    "mapsLabel": "maps.app.goo.gl/oJsSj7zZhbGtSUY37",
+    "imageDisclosure": "CONCEPT IMAGERY · NOT THE VENUE"
+  },
+  "theme": {
+    "primary": "#174d3d",
+    "accent": "#d5ef72",
+    "ink": "#102b25",
+    "background": "#f4f2e9",
+    "surface": "#ffffff",
+    "muted": "#65746d"
+  },
+  "seo": {
+    "siteSuffix": "DK Badminton Academy",
+    "description": "DK Badminton Academy in Selvapuram North, Coimbatore. Check court times and book a court online.",
+    "homeTitle": "Make time for the game",
+    "courtsTitle": "Courts",
+    "pricingTitle": "Pricing & memberships",
+    "aboutTitle": "About the academy",
+    "contactTitle": "Contact & directions",
+    "bookingTitle": "Choose a slot",
+    "detailsTitle": "Your details",
+    "paymentTitle": "Payment",
+    "bookingStatusTitle": "Your booking",
+    "membershipTitle": "Memberships",
+    "membershipStatusTitle": "Your membership",
+    "notFoundTitle": "Page not found"
+  },
+  "nav": {
+    "links": [
+      { "label": "Courts", "to": "/courts", "visible": true },
+      { "label": "Pricing", "to": "/pricing", "visible": true },
+      { "label": "Memberships", "to": "/membership", "visible": true },
+      { "label": "About", "to": "/about", "visible": true },
+      { "label": "Contact", "to": "/contact", "visible": true }
+    ],
+    "bookButton": { "label": "Book a court", "to": "/booking" },
+    "mobileMenuLabel": "Explore"
+  },
+  "footer": {
+    "contactLine": "{address}. Opening hours: {hours}.",
+    "note": "Generated photography is not the actual venue.",
+    "showStaffLogin": true,
+    "staffLoginLabel": "Staff login"
+  },
+  "shared": {
+    "reviews": {
+      "showSampleBadge": true,
+      "sampleBadge": "Sample review",
+      "items": [
+        { "quote": "Booked an evening slot after work and was on court in ten minutes. The lighting is even and the court feels quick.", "name": "Karthik R.", "context": "Evening regular", "rating": 5 },
+        { "quote": "My daughter joined the kids batch as a complete beginner. The coaches are patient and she now looks forward to every session.", "name": "Priya S.", "context": "Parent · junior coaching", "rating": 5 },
+        { "quote": "Came back to badminton after years away. The monthly plan keeps me consistent and finding a partner has been easy.", "name": "Arun M.", "context": "Returning player · membership", "rating": 4 }
+      ]
+    },
+    "faqs": [
+      { "question": "How do I check court availability?", "answer": "Choose a date and time on the booking page, or send the academy an enquiry.", "to": "/booking" },
+      { "question": "What does a session cost?", "answer": "Court rates, membership fees, taxes and payment terms are to be confirmed. Request current pricing before making plans.", "to": "/pricing" },
+      { "question": "Can I enquire about coaching?", "answer": "Yes. Share your goals and preferred times. Coaching availability, format and instructor details are to be confirmed.", "to": "/contact?topic=coaching" },
+      { "question": "What should I bring?", "answer": "Ask the academy about footwear, equipment and venue policies. Requirements and any equipment provision are to be confirmed.", "to": "/contact?topic=visiting" }
+    ]
+  },
+  "home": {
+    "sections": [
+      { "id": "hero", "label": "Top banner", "visible": true },
+      { "id": "locality", "label": "Location strip", "visible": true },
+      { "id": "discovery", "label": "Find your court time", "visible": true },
+      { "id": "journey", "label": "How booking works", "visible": true },
+      { "id": "plans", "label": "Prices and plans", "visible": true },
+      { "id": "community", "label": "Community", "visible": true },
+      { "id": "reviews", "label": "Reviews", "visible": true },
+      { "id": "faq", "label": "Questions", "visible": true },
+      { "id": "contactBand", "label": "Contact band", "visible": true }
+    ],
+    "hero": {
+      "overline": "{venue} / {city}",
+      "title": "Make time for the game.",
+      "lead": "A place for the next rally. Explore badminton in {locality}.",
+      "primaryButton": { "label": "Discover the courts", "to": "/courts" },
+      "secondaryButton": { "label": "Make an enquiry", "to": "/contact" },
+      "note": "Court information, timings & rates: To be confirmed.",
+      "image": { "file": "playerSmash", "imageId": null, "alt": "A badminton player leaping for a smash on a green court", "concept": true }
+    },
+    "locality": {
+      "text": "{locality}, {city}",
+      "link": { "label": "VENUE DETAILS AWAITING VERIFICATION ↗", "to": "/courts" }
+    },
+    "discovery": {
+      "overline": "01 / Find your court time",
+      "title": "A little less scrolling. A little more play.",
+      "titleHighlight": "more play.",
+      "text": "Start with the court, then ask us about the details that matter to your game. Facilities, surfaces and available slots are awaiting confirmation.",
+      "button": { "label": "Explore courts", "to": "/courts" },
+      "note": "Court count & on-site amenities: To be confirmed.",
+      "image": { "file": "hallSteel", "imageId": null, "alt": "An indoor badminton hall with a net across a green court", "concept": true }
+    },
+    "journey": {
+      "title": "From interest to court.",
+      "note": "Live availability. Your slot is held while you pay.",
+      "stages": [
+        { "number": "01", "title": "Explore a time", "text": "Choose a date, court and time." },
+        { "number": "02", "title": "Share your details", "text": "Tell us who is playing and how to reach you." },
+        { "number": "03", "title": "Pay and play", "text": "Your slot is held while you pay, then it’s yours." }
+      ],
+      "button": { "label": "Book a court", "to": "/booking" }
+    },
+    "plans": {
+      "overline": "02 / A rhythm that works for you",
+      "title": "Your game. Your routine.",
+      "button": { "label": "All pricing enquiries", "to": "/pricing" },
+      "cards": [
+        {
+          "title": "Court sessions",
+          "label": "Pay as you play",
+          "text": "Book a court by the hour, whenever your game fits your day.",
+          "priceSource": "court",
+          "price": 500,
+          "unit": "per court / hour",
+          "popular": false,
+          "badge": "Sample price",
+          "features": ["Off-peak (10 am–4 pm): ₹400 / hour", "Racket hire ₹50 · Shuttles on request", "Book up to 7 days ahead"],
+          "button": { "label": "Book a court", "to": "/booking" }
+        },
+        {
+          "title": "Regular play",
+          "label": "Monthly membership",
+          "text": "A monthly plan for a steady playing routine and first pick of slots.",
+          "priceSource": "membership",
+          "price": 2999,
+          "unit": "per month",
+          "popular": true,
+          "badge": "Sample price",
+          "features": ["Up to 12 one-hour court slots", "Priority booking 14 days ahead", "Bring a guest twice a month"],
+          "button": { "label": "See memberships", "to": "/membership" }
+        },
+        {
+          "title": "Coaching enquiries",
+          "label": "Group coaching",
+          "text": "Structured group sessions to build technique, footwork and match play.",
+          "priceSource": "manual",
+          "price": 3500,
+          "unit": "per month",
+          "popular": false,
+          "badge": "Sample price",
+          "features": ["12 sessions · 3 per week", "Kids, beginner & intermediate batches", "Shuttles provided"],
+          "button": { "label": "Enquire about coaching", "to": "/contact?topic=coaching" }
+        }
+      ],
+      "popularBadge": "Most popular",
+      "fromLabel": "From",
+      "note": "Sample pricing for design review. Final rates, GST, batch timings and inclusions to be confirmed by the academy.",
+      "bannerTitle": "Clear before you commit.",
+      "bannerText": "All prices, inclusions, taxes and membership policies are to be confirmed. Request current information directly from the academy.",
+      "bannerButton": { "label": "Request pricing", "to": "/contact?topic=court-sessions" }
+    },
+    "community": {
+      "overline": "03 / The game brings us together",
+      "title": "Come for the rally.\nStay for the game.",
+      "titleHighlight": "rally.",
+      "text": "Our vision is simple: make space for the focus, movement and connection that badminton brings. Whether you are finding your rhythm or returning to play, start a conversation with DK.",
+      "button": { "label": "About the academy", "to": "/about" },
+      "image": { "file": "shuttleAngle", "imageId": null, "alt": "A shuttlecock resting against a racket on a court line", "concept": true }
+    },
+    "reviews": {
+      "overline": "04 / From the court",
+      "title": "Players say it best.",
+      "note": "Sample reviews for design review. Replace with verified player reviews before launch."
+    },
+    "faq": {
+      "overline": "05 / Before you play",
+      "title": "A few things to know.",
+      "note": "Useful starting points. Final venue details will be confirmed by the academy."
+    },
+    "contactBand": {
+      "overline": "{locality} / {city} / {state}",
+      "title": "Let’s get you playing.",
+      "note": "{address}",
+      "button": { "label": "Contact & directions", "to": "/contact" }
+    }
+  },
+  "courts": {
+    "sections": [
+      { "id": "hero", "label": "Top section and photos", "visible": true },
+      { "id": "venue", "label": "Venue information", "visible": true },
+      { "id": "availability", "label": "Availability today", "visible": true }
+    ],
+    "hero": {
+      "overline": "Explore / Courts",
+      "title": "Find your next rally.",
+      "text": "Discover the idea of your next court session at {venue} in {locality}. Ask the academy for verified venue details before planning a visit.",
+      "button": { "label": "Book a court", "to": "/booking" },
+      "image": { "file": "hallArched", "imageId": null, "alt": "A wide arched indoor hall with several green badminton courts", "concept": true },
+      "gallery": [
+        { "file": "shuttleClose", "imageId": null, "alt": "Close-up of a shuttlecock and racket on a green court", "concept": true },
+        { "file": "playerWide", "imageId": null, "alt": "A player mid-jump smash under court lights", "concept": true }
+      ],
+      "galleryOverline": "The space / Concept study",
+      "galleryTitle": "Picture the game. Verify the details.",
+      "galleryNote": "All gallery images are generated concept imagery. Actual venue photographs and specifications are pending."
+    },
+    "venue": {
+      "overline": "Venue information",
+      "title": "Good questions. Clear answers.",
+      "text": "The academy will confirm the specifics. No facility or equipment provision is guaranteed in this concept.",
+      "facilities": [
+        { "label": "Court count & surface", "value": "To be confirmed" },
+        { "label": "Lighting & ventilation", "value": "To be confirmed" },
+        { "label": "Equipment & footwear requirements", "value": "To be confirmed" },
+        { "label": "Changing facilities & parking", "value": "To be confirmed" },
+        { "label": "Accessibility & spectator access", "value": "To be confirmed" }
+      ]
+    },
+    "availability": {
+      "overline": "Availability today",
+      "title": "A time that fits.",
+      "dateLabel": "Date",
+      "courtLabel": "Court",
+      "noSlots": "No more free slots on this date. See other days in the booking page.",
+      "checking": "Checking availability…",
+      "cardTitle": "Take the next step.",
+      "cardText": "Pick a date and time, and your slot is held while you pay.",
+      "cardButton": { "label": "Continue booking", "to": "/booking" }
+    }
+  },
+  "pricing": {
+    "sections": [
+      { "id": "hero", "label": "Top section and cards", "visible": true },
+      { "id": "rates", "label": "Court rates (from your saved prices)", "visible": true },
+      { "id": "compare", "label": "Comparison table", "visible": true },
+      { "id": "commit", "label": "Before you commit", "visible": true }
+    ],
+    "hero": {
+      "overline": "Pricing & membership enquiries",
+      "title": "More game. Less guesswork.",
+      "titleHighlight": "Less guesswork.",
+      "lead": "Choose a conversation to start. Rates and available membership options are to be confirmed.",
+      "button": { "label": "See membership plans", "to": "/membership" },
+      "notice": "These are enquiry categories, not confirmed products. No plan, price, benefit or booking entitlement is guaranteed.",
+      "cards": [
+        {
+          "label": "Enquiry option",
+          "title": "Court sessions",
+          "text": "For a session on your schedule. Ask about current court availability and hourly rates.",
+          "priceText": "₹—",
+          "priceNote": "Pricing & availability to confirm",
+          "terms": ["Session format: To be confirmed", "Access & eligibility: To be confirmed", "Terms & cancellation: To be confirmed"],
+          "button": { "label": "Request pricing", "to": "/contact?topic=court-sessions" }
+        },
+        {
+          "label": "Enquiry option",
+          "title": "Regular play",
+          "text": "For a playing routine. Ask whether recurring sessions or memberships are available.",
+          "priceText": "₹—",
+          "priceNote": "Pricing & availability to confirm",
+          "terms": ["Session format: To be confirmed", "Access & eligibility: To be confirmed", "Terms & cancellation: To be confirmed"],
+          "button": { "label": "Request pricing", "to": "/contact?topic=regular-play" }
+        },
+        {
+          "label": "Enquiry option",
+          "title": "Learning goals",
+          "text": "For coaching enquiries. Ask about formats, suitability, schedules and fees.",
+          "priceText": "₹—",
+          "priceNote": "Pricing & availability to confirm",
+          "terms": ["Session format: To be confirmed", "Access & eligibility: To be confirmed", "Terms & cancellation: To be confirmed"],
+          "button": { "label": "Request pricing", "to": "/contact?topic=coaching" }
+        }
+      ]
+    },
+    "rates": {
+      "overline": "Court rates",
+      "title": "What a court costs.",
+      "daysColumn": "Days",
+      "timeColumn": "Time",
+      "rateColumn": "Per hour",
+      "note": "These rates come straight from the booking system."
+    },
+    "compare": {
+      "overline": "Compare the questions / Not confirmed inclusions",
+      "title": "Know what to ask.",
+      "firstColumn": "Details to verify",
+      "columns": ["Court sessions", "Regular play", "Learning goals"],
+      "rows": [
+        { "label": "Session duration", "values": ["To be confirmed", "To be confirmed", "To be confirmed"] },
+        { "label": "Booking priority", "values": ["To be confirmed", "To be confirmed", "To be confirmed"] },
+        { "label": "Equipment provision", "values": ["To be confirmed", "To be confirmed", "To be confirmed"] },
+        { "label": "Cancellation & refund", "values": ["To be confirmed", "To be confirmed", "To be confirmed"] },
+        { "label": "Fees, taxes & validity", "values": ["To be confirmed", "To be confirmed", "To be confirmed"] }
+      ]
+    },
+    "commit": {
+      "title": "Before you commit.",
+      "text": "Request written confirmation of rates and policies from the academy.",
+      "button": { "label": "Request current pricing", "to": "/contact?topic=court-sessions" }
+    }
+  },
+  "about": {
+    "sections": [
+      { "id": "hero", "label": "Top banner", "visible": true },
+      { "id": "values", "label": "Values", "visible": true },
+      { "id": "marquee", "label": "Moving text strip", "visible": true },
+      { "id": "coaching", "label": "Coaching", "visible": true },
+      { "id": "local", "label": "Local band", "visible": true }
+    ],
+    "hero": {
+      "overline": "DK / The academy",
+      "title": "The game is the starting point.",
+      "titleHighlight": "starting point.",
+      "text": "A badminton identity rooted in {locality}, {city}. A vision built around the simple value of showing up for the game.",
+      "note": "Brand philosophy concept · Business history to be confirmed.",
+      "image": { "file": "playerJump", "imageId": null, "alt": "A player jumping to play an overhead shot", "concept": true }
+    },
+    "values": {
+      "overline": "Our intent / Not a list of claims",
+      "title": "Focus. Respect. Keep playing.",
+      "items": [
+        { "number": "01", "title": "Make room for focus", "text": "A clear mind, a moving shuttle and the next point. We see the court as a place to be present." },
+        { "number": "02", "title": "Respect the rally", "text": "Respect for the game starts with the people who share it. Consideration belongs on both sides of the net." },
+        { "number": "03", "title": "Find your rhythm", "text": "Every player has a different starting point. A good conversation helps identify the right next step." }
+      ]
+    },
+    "marquee": { "items": ["Focus", "Respect", "Keep playing", "{locality}", "{city}"] },
+    "coaching": {
+      "overline": "Coaching / Start with an enquiry",
+      "title": "Want to sharpen your",
+      "rotatingWords": ["footwork?", "smash?", "stamina?", "game?"],
+      "text": "Tell us about your experience, goals and preferred times. The academy can clarify whether a suitable coaching option is available.",
+      "notice": "Coaching availability, instructor credentials, age groups, class formats and schedules: To be confirmed.",
+      "button": { "label": "Enquire about coaching", "to": "/contact?topic=coaching" },
+      "image": { "file": "shuttleLine", "imageId": null, "alt": "A shuttlecock and racket lying across a white court line", "concept": true }
+    },
+    "local": {
+      "title": "Local to {city}. Open to a conversation.",
+      "text": "{address}",
+      "button": { "label": "Contact the academy", "to": "/contact" }
+    }
+  },
+  "contact": {
+    "overline": "Contact / {venue}",
+    "title": "Your next game starts with a",
+    "typedWord": "hello.",
+    "lead": "Ask about courts, membership options, coaching or visiting the academy.",
+    "findUsTitle": "Find us in {locality}.",
+    "cityLine": "{city}, {state}.",
+    "phoneLabel": "Phone / WhatsApp:",
+    "emailLabel": "Email:",
+    "hoursLabel": "Opening hours:",
+    "whatsappButton": "Message us on WhatsApp",
+    "whatsappMessage": "Hi, I have a question about {venue}.",
+    "directionsTitle": "Check before you travel.",
+    "directionsText": "Use the supplied business reference as a starting point. The listing and directions have not been verified.",
+    "directionsButton": "Open directions reference",
+    "formOverline": "Send an enquiry",
+    "formTitle": "What’s on your mind?",
+    "nameLabel": "Your name",
+    "namePlaceholder": "Enter your name",
+    "emailFieldLabel": "Email",
+    "emailPlaceholder": "you@example.com",
+    "phoneFieldLabel": "Phone (optional)",
+    "phonePlaceholder": "Your preferred contact number",
+    "topicLabel": "Interested in",
+    "preferredLabel": "Preferred date / time",
+    "preferredPlaceholder": "Tell us what works for you",
+    "messageLabel": "Message",
+    "messagePlaceholder": "Share your questions or playing goals…",
+    "consent": "I agree to be contacted about this enquiry.",
+    "sendButton": "Send enquiry",
+    "sendingButton": "Sending…",
+    "sentMessage": "Thanks. Your enquiry {enquiryNo} has reached the academy, and they’ll contact you.",
+    "topics": [
+      { "value": "court-sessions", "label": "Court availability" },
+      { "value": "regular-play", "label": "Regular play / membership" },
+      { "value": "coaching", "label": "Coaching" },
+      { "value": "visiting", "label": "Visiting the academy" },
+      { "value": "other", "label": "Something else" }
+    ]
+  },
+  "booking": {
+    "steps": { "choose": "Choose a slot", "details": "Your details", "payment": "Payment", "confirmed": "Confirmed" },
+    "testModeNotice": "Test mode · Payments here are simulated, no real money moves, and test bookings may be removed.",
+    "summaryOverline": "Your booking",
+    "summaryTitle": "Your court time.",
+    "summaryNoTime": "No time selected",
+    "summaryTotal": "Total",
+    "choose": {
+      "overline": "01 / Choose your court time",
+      "title": "Make space for your game.",
+      "offlineNotice": "Online booking isn’t open yet. Please contact the academy to book a court.",
+      "courtLabel": "Court",
+      "legendAvailable": "Available",
+      "legendSelected": "Selected ✓",
+      "legendUnavailable": "Unavailable",
+      "checking": "Checking availability…",
+      "noSlots": "No court times on this day. Try another date.",
+      "note": "Times shown in IST. Availability updates live and a slot is only yours once it’s held in the next step.",
+      "nextButton": "Next: your details",
+      "backButton": "Back to courts"
+    },
+    "details": {
+      "overline": "02 / Your details",
+      "title": "Who’s taking the court?",
+      "nameLabel": "Full name",
+      "nameHint": "The name the academy should ask for.",
+      "phoneLabel": "Mobile number",
+      "emailLabel": "Email address",
+      "emailHint": "Your booking details go here.",
+      "notesLabel": "Additional notes (optional)",
+      "consent": "I agree that the academy may contact me about this booking.",
+      "policyNote": "Cancellation and refund rules are being finalised. Contact the academy if your plans change.",
+      "backButton": "Back: choose a slot",
+      "submitButton": "Hold slot and pay",
+      "submittingButton": "Holding your slot…",
+      "incompleteNote": "Complete the required fields and the agreement to continue.",
+      "holdNote": "We’ll hold this slot for {minutes} minutes while you pay."
+    },
+    "pay": {
+      "overline": "03 / Payment",
+      "title": "Your slot is held.",
+      "timerBefore": "Pay within",
+      "timerAfter": "to confirm {bookingNo}.",
+      "loading": "Loading your booking…",
+      "releaseButton": "Release this slot and choose another"
+    },
+    "outcome": {
+      "confirmedOverline": "04 / Confirmed",
+      "statusOverline": "Booking status",
+      "confirmedTitle": "See you on court, {name}.",
+      "waitingTitle": "Waiting for payment.",
+      "waitingText": "Finish paying to confirm this slot.",
+      "expiredTitle": "This hold has ended.",
+      "expiredText": "The time to pay ran out or the slot was released, so nothing was booked or charged.",
+      "cancelledTitle": "This booking was cancelled.",
+      "cancelledText": "Contact the academy if you have questions about it.",
+      "numberBefore": "Booking",
+      "numberAfter": "· Show this number at the desk. Bookmark this page, or use the link in your email, to see your booking again.",
+      "changeNote": "Need to change something? Contact the academy with your booking number.",
+      "continueButton": "Continue to payment",
+      "chooseButton": "Choose a slot",
+      "contactButton": "Contact the academy",
+      "whatsappButton": "Message us on WhatsApp",
+      "whatsappMessage": "Hi, this is about my booking {bookingNo}.",
+      "notFound": "We couldn’t find this booking. Check the link, or contact the academy.",
+      "loading": "Loading your booking…"
+    }
+  },
+  "membership": {
+    "join": {
+      "testModeNotice": "Test mode · Payments here are simulated, no real money moves, and test memberships may be removed.",
+      "overline": "Memberships",
+      "title": "A regular place on court.",
+      "lead": "Every membership runs monthly and comes with a fixed time.",
+      "loading": "Loading plans…",
+      "noPlans": "Membership plans aren’t open yet. Please contact the academy.",
+      "offline": "Online joining isn’t open yet. Please contact the academy to join.",
+      "planHeading": "1. Choose a plan",
+      "perMonth": "per month",
+      "perCourtPerMonth": "per court, per month",
+      "playersNote": "Up to {players} players per court.",
+      "batchHeading": "2. Choose your batch",
+      "noBatches": "No batches are open for this plan yet. Please contact the academy.",
+      "full": "Full",
+      "timeHeading": "2. Choose your fixed time",
+      "courtsLabel": "Courts",
+      "daysLabel": "Days",
+      "startLabel": "Start time (IST)",
+      "startHint": "Each session is {minutes} minutes.",
+      "detailsHeading": "3. Your details",
+      "nameLabel": "Full name",
+      "phoneLabel": "Mobile number",
+      "emailLabel": "Email address",
+      "emailHint": "Your membership details go here.",
+      "startDateLabel": "Start date",
+      "codeLabel": "Referral code (optional)",
+      "codeButton": "Apply",
+      "consent": "I agree that the academy may contact me about this membership.",
+      "policyNote": "Cancellation and refund rules are being finalised. Your place is held for {minutes} minutes while you pay.",
+      "submitButton": "Hold my place",
+      "submittingButton": "Holding your place…"
+    },
+    "status": {
+      "welcomeTitle": "Welcome, {name}.",
+      "heldTitle": "Your place is held.",
+      "cancelledTitle": "This membership was cancelled.",
+      "endedTitle": "This hold has ended.",
+      "testModeNotice": "Test mode · This payment is simulated and no real money moves.",
+      "timerBefore": "Pay within",
+      "timerAfter": "to confirm.",
+      "releaseButton": "Release my place",
+      "numberNotice": "Show this number at the desk: {membershipNo}. Bookmark this page, or use the link in your email, to see your membership again.",
+      "referralNotice": "Know someone who’d like to play? Share your referral code: {code}.",
+      "nothingCharged": "Nothing was charged for this hold.",
+      "seeButton": "See memberships",
+      "contactButton": "Contact the academy",
+      "whatsappButton": "Message us on WhatsApp",
+      "whatsappMessage": "Hi, this is about my membership {membershipNo}.",
+      "notFound": "We couldn’t find this membership. Check the link, or contact the academy.",
+      "loading": "Loading your membership…"
+    }
+  },
+  "notFound": {
+    "overline": "404 / Out of court",
+    "title": "That shot went long.",
+    "text": "The page you were looking for doesn’t exist or has moved.",
+    "primaryButton": { "label": "Back to home", "to": "/" },
+    "secondaryButton": { "label": "Explore courts", "to": "/courts" }
+  },
+  "customPages": []
+}

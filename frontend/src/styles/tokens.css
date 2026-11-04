@@ -1,0 +1,64 @@
+/* Design tokens from Figma "01 — Brand & Design Tokens" (DK Badminton). */
+:root {
+  /* Semantic colour */
+  --text-primary: #102b25; /* Court ink */
+  --action-primary: #174d3d; /* Court green */
+  --background-marketing: #f4f2e9; /* Warm ivory */
+  --accent-rally: #d5ef72; /* Rally lime */
+  --surface-default: #ffffff; /* Paper */
+  --text-secondary: #65746d; /* Muted */
+  --border-subtle: #d9e0d8; /* Fine rule */
+  --background-workspace: #f2f5f1; /* Workspace */
+  --surface-tint: #ebf0e8;
+  --surface-unavailable: #e4e8e2;
+
+  /* Status language */
+  --status-success: #256244;
+  --status-success-bg: #e7f2e9;
+  --status-warning: #88601c;
+  --status-warning-bg: #f8eed8;
+  --status-danger: #a83e36;
+  --status-danger-bg: #faeae6;
+
+  /* Typography */
+  --font-display: 'Barlow Condensed', 'Arial Narrow', sans-serif;
+  --font-ui: 'Inter', system-ui, -apple-system, 'Segoe UI', sans-serif;
+
+  /* Spacing scale */
+  --space-4: 4px;
+  --space-8: 8px;
+  --space-12: 12px;
+  --space-16: 16px;
+  --space-24: 24px;
+  --space-32: 32px;
+  --space-48: 48px;
+  --space-64: 64px;
+  --space-80: 80px;
+
+  /* Geometry: 0 sections · 4 fields & buttons · 8 panels · 100 pills */
+  --radius-4: 4px;
+  --radius-8: 8px;
+  --radius-pill: 100px;
+  --shadow-dialog: 0 12px 32px rgb(16 43 37 / 10%);
+
+  /* Motion: strong curves (Emil Kowalski). Mirrored as arrays in src/lib/motion.js. */
+  --ease-out: cubic-bezier(0.23, 1, 0.32, 1);
+  --ease-in-out: cubic-bezier(0.77, 0, 0.175, 1);
+  --ease-drawer: cubic-bezier(0.32, 0.72, 0, 1);
+
+  /* Responsive page gutter: 24 mobile · 32 tablet · 64 desktop */
+  --gutter: 24px;
+  --content-max: 1440px;
+}
+
+@media (min-width: 768px) {
+  :root {
+    --gutter: 32px;
+  }
+}
+
+@media (min-width: 1200px) {
+  :root {
+    --gutter: 64px;
+  }
+}

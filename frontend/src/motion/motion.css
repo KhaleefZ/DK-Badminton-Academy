@@ -1,0 +1,688 @@
+/* Motion Director component styles. Import once (e.g. in main.jsx). Uses the project's
+   --ease-out / --ease-in-out tokens when present, with the same values as fallbacks. */
+
+/* Screen-reader copy + size-reserving ghost text shared by text effects */
+.md-sr {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip: rect(0 0 0 0);
+  white-space: nowrap;
+}
+
+.md-type,
+.md-scramble {
+  position: relative;
+}
+
+.md-ghost {
+  visibility: hidden;
+}
+
+.md-type__live,
+.md-scramble__live {
+  position: absolute;
+  inset: 0;
+}
+
+/* Typewriter caret */
+.md-caret {
+  display: inline-block;
+  width: 0.07em;
+  height: 0.9em;
+  margin-left: 0.06em;
+  vertical-align: -0.08em;
+  background: currentColor;
+  animation: md-caret-blink 1s steps(1) infinite;
+}
+
+.md-caret--done {
+  animation:
+    md-caret-blink 1s steps(1) infinite,
+    md-caret-out 300ms 1.2s forwards;
+}
+
+@keyframes md-caret-blink {
+  50% {
+    opacity: 0;
+  }
+}
+
+@keyframes md-caret-out {
+  to {
+    visibility: hidden;
+  }
+}
+
+/* Scramble: tabular digits keep width steady */
+.md-scramble {
+  font-variant-numeric: tabular-nums;
+}
+
+/* Split reveal masks. Padding/negative margin keeps descenders from being clipped. */
+.md-split__mask {
+  display: inline-block;
+  overflow: hidden;
+  vertical-align: top;
+  padding-bottom: 0.12em;
+  margin-bottom: -0.12em;
+}
+
+.md-split__mask--line {
+  display: block;
+}
+
+.md-split__piece {
+  display: inline-block;
+  will-change: transform;
+}
+
+.md-split__word,
+.md-split__group {
+  display: inline-block;
+  white-space: nowrap;
+}
+
+/* Scribble emphasis */
+.md-scribble {
+  position: relative;
+  display: inline-block;
+  white-space: nowrap;
+}
+
+.md-scribble__svg {
+  position: absolute;
+  left: -2%;
+  width: 104%;
+  overflow: visible;
+  pointer-events: none;
+}
+
+.md-scribble--underline .md-scribble__svg,
+.md-scribble--double .md-scribble__svg {
+  bottom: -0.18em;
+  height: 0.3em;
+}
+
+.md-scribble--circle .md-scribble__svg {
+  left: -10%;
+  top: -18%;
+  width: 120%;
+  height: 136%;
+}
+
+.md-scribble--marker {
+  isolation: isolate;
+}
+
+.md-scribble__marker {
+  position: absolute;
+  inset: 0.45em -0.08em 0.02em;
+  z-index: -1;
+  transform-origin: left center;
+}
+
+/* Mask reveal fills its parent */
+.md-mask,
+.md-mask__inner {
+  width: 100%;
+  height: 100%;
+}
+
+.md-mask {
+  overflow: hidden;
+}
+
+.md-mask__inner > img,
+.md-parallax__inner > img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+
+/* Parallax frame */
+.md-parallax {
+  overflow: hidden;
+  width: 100%;
+  height: 100%;
+}
+
+.md-parallax__inner {
+  width: 100%;
+  height: 100%;
+  will-change: transform;
+}
+
+/* Marquee */
+.md-marquee {
+  overflow: hidden;
+  mask-image: linear-gradient(90deg, transparent, #000 6%, #000 94%, transparent);
+}
+
+.md-marquee__track {
+  display: flex;
+  width: max-content;
+  animation: md-marquee var(--md-marquee-speed, 35s) linear infinite;
+}
+
+.md-marquee--reverse .md-marquee__track {
+  animation-direction: reverse;
+}
+
+.md-marquee__group {
+  display: flex;
+  flex: none;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.md-marquee__item {
+  display: flex;
+  align-items: center;
+  white-space: nowrap;
+}
+
+.md-marquee__sep {
+  padding-inline: 0.75em;
+  opacity: 0.6;
+}
+
+@keyframes md-marquee {
+  to {
+    transform: translateX(-50%);
+  }
+}
+
+@media (hover: hover) and (pointer: fine) {
+  .md-marquee:hover .md-marquee__track {
+    animation-play-state: paused;
+  }
+}
+
+/* Count-up */
+.md-count {
+  font-variant-numeric: tabular-nums;
+}
+
+/* Magnetic */
+.md-magnetic {
+  display: inline-block;
+}
+
+/* Sticky steps */
+.md-sticky {
+  position: relative;
+  height: var(--md-sticky-height, 240vh);
+}
+
+.md-sticky__frame {
+  position: sticky;
+  top: 0;
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 48px;
+  align-items: center;
+  min-height: 100vh;
+}
+
+.md-sticky__steps {
+  display: flex;
+  flex-direction: column;
+  gap: 24px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.md-sticky__step {
+  opacity: 0.35;
+  transition: opacity 300ms var(--ease-out, cubic-bezier(0.23, 1, 0.32, 1));
+}
+
+.md-sticky__step.is-active {
+  opacity: 1;
+}
+
+@media (max-width: 899px) {
+  .md-sticky {
+    height: auto;
+  }
+
+  .md-sticky__frame {
+    position: static;
+    display: block;
+    min-height: 0;
+  }
+
+  .md-sticky__step {
+    opacity: 1;
+  }
+
+  .md-sticky__visual {
+    display: none;
+  }
+}
+
+/* Reduced motion: CSS-driven effects become static */
+@media (prefers-reduced-motion: reduce) {
+  .md-marquee__track {
+    animation: none;
+  }
+
+  .md-caret {
+    display: none;
+  }
+}
+
+/* ───────────── v2 components ───────────── */
+
+/* Text rotator: ghost stack reserves the widest word */
+.md-rotator {
+  position: relative;
+  display: inline-grid;
+  vertical-align: bottom;
+  overflow: hidden;
+  padding-bottom: 0.12em;
+  margin-bottom: -0.12em;
+}
+
+.md-rotator__ghost {
+  display: inline-grid;
+  visibility: hidden;
+}
+
+.md-rotator__ghost > span,
+.md-rotator__ghost,
+.md-rotator__live {
+  grid-area: 1 / 1;
+}
+
+.md-rotator__live {
+  position: relative;
+  display: inline-grid;
+}
+
+.md-rotator__word {
+  grid-area: 1 / 1;
+  display: inline-block;
+  white-space: nowrap;
+}
+
+/* Scroll text fill */
+.md-fill__word {
+  display: inline;
+}
+
+/* Blur reveal hint */
+.md-blur {
+  will-change: filter, transform;
+}
+
+/* Scroll zoom */
+.md-zoom {
+  position: relative;
+  height: var(--md-zoom-height, 200vh);
+}
+
+.md-zoom__stage {
+  position: sticky;
+  top: 0;
+  height: 100vh;
+  overflow: hidden;
+}
+
+.md-zoom__frame,
+.md-zoom__media,
+.md-zoom--static {
+  width: 100%;
+  height: 100%;
+}
+
+.md-zoom__media {
+  will-change: transform;
+}
+
+.md-zoom__media > img,
+.md-zoom__media > video,
+.md-zoom--static > img,
+.md-zoom--static > video {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+
+.md-zoom--static {
+  height: 70vh;
+}
+
+@media (max-width: 699px) {
+  .md-zoom {
+    height: auto;
+  }
+
+  .md-zoom__stage {
+    position: static;
+    height: 60vh;
+  }
+
+  .md-zoom__frame,
+  .md-zoom__media {
+    clip-path: none !important;
+    transform: none !important;
+  }
+}
+
+/* Horizontal scroll */
+.md-hscroll__stage {
+  position: sticky;
+  top: 0;
+  height: 100vh;
+  display: flex;
+  align-items: center;
+  overflow: hidden;
+}
+
+.md-hscroll__track {
+  display: flex;
+  width: max-content;
+  padding-inline: var(--md-hscroll-pad, 64px);
+  will-change: transform;
+}
+
+.md-hscroll__track > * {
+  flex: none;
+}
+
+.md-hscroll--native .md-hscroll__track {
+  width: auto;
+  overflow-x: auto;
+  scroll-snap-type: x mandatory;
+  padding-inline: var(--md-hscroll-pad-mobile, 24px);
+  scrollbar-width: none;
+}
+
+.md-hscroll--native .md-hscroll__track > * {
+  scroll-snap-align: start;
+}
+
+/* Stacking cards */
+.md-stack {
+  position: relative;
+}
+
+.md-stack__slot {
+  position: sticky;
+  padding-bottom: 32px;
+}
+
+.md-stack__card {
+  transform-origin: center top;
+  will-change: transform;
+}
+
+@media (max-width: 699px) {
+  .md-stack__slot {
+    position: static;
+  }
+
+  .md-stack__card {
+    transform: none !important;
+    filter: none !important;
+  }
+}
+
+/* Tilt card */
+.md-tilt {
+  position: relative;
+  transform-style: preserve-3d;
+}
+
+.md-tilt__glare {
+  position: absolute;
+  inset: 0;
+  border-radius: inherit;
+  pointer-events: none;
+  mix-blend-mode: soft-light;
+}
+
+/* Spotlight cards */
+.md-spotlight__card {
+  position: relative;
+  isolation: isolate;
+}
+
+.md-spotlight__card::before {
+  content: '';
+  position: absolute;
+  inset: 0;
+  z-index: -1;
+  border-radius: inherit;
+  background: radial-gradient(var(--md-spot-size, 360px) circle at var(--md-x, -999px) var(--md-y, -999px), var(--md-spot-color), transparent 70%);
+  opacity: 0;
+  transition: opacity 300ms var(--ease-out, cubic-bezier(0.23, 1, 0.32, 1));
+  pointer-events: none;
+}
+
+@media (hover: hover) and (pointer: fine) {
+  .md-spotlight:hover .md-spotlight__card::before {
+    opacity: 1;
+  }
+}
+
+/* Scroll progress */
+.md-progress {
+  position: fixed;
+  inset: 0 0 auto;
+  z-index: 100;
+  transform-origin: left center;
+}
+
+/* Disclosure */
+.md-disclosure__q {
+  display: flex;
+  width: 100%;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  padding: 18px 0;
+  border: 0;
+  background: none;
+  color: inherit;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.md-disclosure__chevron {
+  flex: none;
+  width: 10px;
+  height: 10px;
+  border-right: 2px solid currentColor;
+  border-bottom: 2px solid currentColor;
+  transform: translateY(-3px) rotate(45deg);
+  transition: transform 220ms var(--ease-out, cubic-bezier(0.23, 1, 0.32, 1));
+}
+
+.md-disclosure.is-open .md-disclosure__chevron {
+  transform: translateY(2px) rotate(225deg);
+}
+
+.md-disclosure__a {
+  overflow: hidden;
+}
+
+.md-disclosure__body {
+  padding-bottom: 18px;
+}
+
+/* Rolling number */
+.md-roll {
+  font-variant-numeric: tabular-nums;
+}
+
+.md-roll__row {
+  display: inline-flex;
+}
+
+.md-roll__col {
+  position: relative;
+  display: inline-block;
+  overflow: hidden;
+  height: 1.1em;
+  line-height: 1.1;
+}
+
+.md-roll__ghost {
+  visibility: hidden;
+}
+
+.md-roll__strip {
+  position: absolute;
+  inset: 0 0 auto;
+  display: flex;
+  flex-direction: column;
+}
+
+.md-roll__strip > span {
+  display: block;
+  height: 1.1em;
+}
+
+/* ───────────── CSS-only utilities (any stack) ───────────── */
+
+/* Press feedback for every pressable */
+.md-press {
+  transition: transform 160ms var(--ease-out, cubic-bezier(0.23, 1, 0.32, 1));
+}
+
+.md-press:active {
+  transform: scale(0.97);
+}
+
+/* Link underline that draws from the left on hover/focus */
+.md-link {
+  background: linear-gradient(currentColor, currentColor) left bottom / 0% 1px no-repeat;
+  transition: background-size 300ms var(--ease-out, cubic-bezier(0.23, 1, 0.32, 1));
+}
+
+.md-link:focus-visible {
+  background-size: 100% 1px;
+}
+
+/* Light sweep across a primary button on hover (one CTA per page) */
+.md-shine {
+  position: relative;
+  overflow: hidden;
+  isolation: isolate;
+}
+
+.md-shine::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  z-index: -1;
+  background: linear-gradient(105deg, transparent 35%, rgba(255, 255, 255, 0.35) 50%, transparent 65%);
+  transform: translateX(-110%);
+  pointer-events: none;
+}
+
+/* Image zoom inside a card on hover */
+.md-hover-zoom {
+  overflow: hidden;
+}
+
+.md-hover-zoom img {
+  transition: transform 600ms var(--ease-out, cubic-bezier(0.23, 1, 0.32, 1));
+}
+
+/* Rotating gradient border — for ONE live/featured element (a "Live now" badge, the
+   recommended plan). Requires @property support; elsewhere it is a static gradient. */
+@property --md-angle {
+  syntax: '<angle>';
+  initial-value: 0deg;
+  inherits: false;
+}
+
+.md-glow-border {
+  border: 1.5px solid transparent;
+  background:
+    linear-gradient(var(--md-glow-fill, #fff), var(--md-glow-fill, #fff)) padding-box,
+    conic-gradient(from var(--md-angle), var(--md-glow-a, #d5ef72), var(--md-glow-b, transparent) 40%, var(--md-glow-a, #d5ef72)) border-box;
+  animation: md-spin 6s linear infinite;
+}
+
+@keyframes md-spin {
+  to {
+    --md-angle: 360deg;
+  }
+}
+
+/* Validation shake: add .md-shake for one cycle (remove on animationend) */
+.md-shake {
+  animation: md-shake 300ms var(--ease-out, cubic-bezier(0.23, 1, 0.32, 1));
+}
+
+@keyframes md-shake {
+  25% {
+    transform: translateX(-6px);
+  }
+
+  50% {
+    transform: translateX(5px);
+  }
+
+  75% {
+    transform: translateX(-3px);
+  }
+}
+
+@media (hover: hover) and (pointer: fine) {
+  .md-link:hover {
+    background-size: 100% 1px;
+  }
+
+  .md-shine:hover::after {
+    transform: translateX(110%);
+    transition: transform 700ms var(--ease-in-out, cubic-bezier(0.77, 0, 0.175, 1));
+  }
+
+  .md-hover-zoom:hover img {
+    transform: scale(1.05);
+  }
+}
+
+/* Scroll-driven reveal with no JavaScript (plain HTML/CSS stacks). Progressive: browsers
+   without animation-timeline show the content normally. */
+@supports (animation-timeline: view()) {
+  .md-css-reveal {
+    animation: md-css-reveal linear both;
+    animation-timeline: view();
+    animation-range: entry 0% entry 60%;
+  }
+
+  @keyframes md-css-reveal {
+    from {
+      opacity: 0;
+      transform: translateY(20px);
+    }
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .md-glow-border,
+  .md-shake,
+  .md-css-reveal {
+    animation: none;
+  }
+
+  .md-press:active,
+  .md-hover-zoom:hover img {
+    transform: none;
+  }
+
+  .md-shine::after {
+    display: none;
+  }
+}
