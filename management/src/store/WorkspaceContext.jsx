@@ -2,9 +2,10 @@ import { createContext, useCallback, useContext, useMemo, useState } from 'react
 
 const WorkspaceContext = createContext(null);
 
-/** Short confirmation messages shown over any page. */
+/** Short confirmation messages shown over any page and global action state. */
 export function WorkspaceProvider({ children }) {
   const [toasts, setToasts] = useState([]);
+  const [bookingDialogOpen, setBookingDialogOpen] = useState(false);
 
   const notify = useCallback((message) => {
     const id = Date.now() + Math.random();
@@ -12,7 +13,19 @@ export function WorkspaceProvider({ children }) {
     setTimeout(() => setToasts((t) => t.filter((x) => x.id !== id)), 4000);
   }, []);
 
-  const value = useMemo(() => ({ notify, toasts }), [notify, toasts]);
+  const openBookingDialog = useCallback(() => setBookingDialogOpen(true), []);
+  const closeBookingDialog = useCallback(() => setBookingDialogOpen(false), []);
+
+  const value = useMemo(
+    () => ({
+      notify,
+      toasts,
+      bookingDialogOpen,
+      openBookingDialog,
+      closeBookingDialog,
+    }),
+    [notify, toasts, bookingDialogOpen, openBookingDialog, closeBookingDialog],
+  );
 
   return <WorkspaceContext.Provider value={value}>{children}</WorkspaceContext.Provider>;
 }

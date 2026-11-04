@@ -1,52 +1,74 @@
-/* Design tokens from Figma "01 — Brand & Design Tokens" (DK Badminton). */
+/* Design tokens from Figma "01 — Brand & Design Tokens" (DK Badminton) + Modern Management UI */
 :root {
   /* Semantic colour */
   --text-primary: #102b25; /* Court ink */
   --action-primary: #174d3d; /* Court green */
   --background-marketing: #f4f2e9; /* Warm ivory */
   --accent-rally: #d5ef72; /* Rally lime */
+  --accent-lime-border: #6ee7b7;
   --surface-default: #ffffff; /* Paper */
-  --text-secondary: #65746d; /* Muted */
-  --border-subtle: #d9e0d8; /* Fine rule */
-  --background-workspace: #f2f5f1; /* Workspace */
-  --surface-tint: #ebf0e8;
-  --surface-unavailable: #e4e8e2;
+  --text-secondary: #64748b; /* Muted slate */
+  --border-subtle: #e2e8f0; /* Crisp subtle rule */
+  --background-workspace: #f8faf9; /* Modern clean light mint-tinted workspace */
+  --surface-tint: #ebf5ee;
+  --surface-unavailable: #f1f5f9;
+
+  /* Modern sidebar palette */
+  --sidebar-bg: #072218;
+  --sidebar-hover: rgba(255, 255, 255, 0.08);
+  --sidebar-text-muted: #84a999;
+  --nav-active-bg: linear-gradient(135deg, #0e7b45 0%, #16a34a 100%);
+  --nav-active-shadow: 0 4px 14px rgba(22, 163, 74, 0.35);
 
   /* Status language */
-  --status-success: #256244;
-  --status-success-bg: #e7f2e9;
-  --status-warning: #88601c;
-  --status-warning-bg: #f8eed8;
-  --status-danger: #a83e36;
-  --status-danger-bg: #faeae6;
+  --status-success: #15803d;
+  --status-success-bg: #dcfce7;
+  --status-warning: #b45309;
+  --status-warning-bg: #fef3c7;
+  --status-danger: #dc2626;
+  --status-danger-bg: #fee2e2;
+
+  /* Accent colors */
+  --color-green: #16a34a;
+  --color-green-light: #dcfce7;
+  --color-blue: #2563eb;
+  --color-blue-light: #dbeafe;
+  --color-orange: #ea580c;
+  --color-orange-light: #ffedd5;
 
   /* Typography */
   --font-display: 'Barlow Condensed', 'Arial Narrow', sans-serif;
-  --font-ui: 'Inter', system-ui, -apple-system, 'Segoe UI', sans-serif;
+  --font-ui: 'Inter', system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif;
 
   /* Spacing scale */
   --space-4: 4px;
   --space-8: 8px;
   --space-12: 12px;
   --space-16: 16px;
+  --space-20: 20px;
   --space-24: 24px;
   --space-32: 32px;
   --space-48: 48px;
   --space-64: 64px;
   --space-80: 80px;
 
-  /* Geometry: 0 sections · 4 fields & buttons · 8 panels · 100 pills */
+  /* Geometry */
   --radius-4: 4px;
   --radius-8: 8px;
+  --radius-12: 12px;
+  --radius-16: 16px;
+  --radius-20: 20px;
   --radius-pill: 100px;
-  --shadow-dialog: 0 12px 32px rgb(16 43 37 / 10%);
+  --shadow-card: 0 10px 25px -5px rgba(0, 0, 0, 0.03), 0 8px 10px -6px rgba(0, 0, 0, 0.02);
+  --shadow-float: 0 4px 16px rgba(0, 0, 0, 0.06);
+  --shadow-dialog: 0 16px 40px rgba(10, 38, 28, 0.16);
 
   /* Motion: strong curves (Emil Kowalski). Mirrored as arrays in src/lib/motion.js. */
   --ease-out: cubic-bezier(0.23, 1, 0.32, 1);
   --ease-in-out: cubic-bezier(0.77, 0, 0.175, 1);
   --ease-drawer: cubic-bezier(0.32, 0.72, 0, 1);
 
-  /* Responsive page gutter: 24 mobile · 32 tablet · 64 desktop */
+  /* Responsive page gutter */
   --gutter: 24px;
   --content-max: 1440px;
 }
@@ -59,6 +81,6 @@
 
 @media (min-width: 1200px) {
   :root {
-    --gutter: 64px;
+    --gutter: 48px;
   }
 }

@@ -6,6 +6,7 @@ import './styles/base.css';
 import './styles/components.css';
 import './styles/pages.css';
 import './styles/login.css';
+import './styles/modern-theme.css';
 
 createRoot(document.getElementById('root')).render(
   <StrictMode>
