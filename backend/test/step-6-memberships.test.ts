@@ -436,3 +436,16 @@ describe('joining on the website', () => {
     await site('get', '/memberships/wrong').expect(404);
   });
 });
+
+describe('requests arriving together', () => {
+  it('gives the last seat in a batch to only one of several people', async () => {
+    const batch = await addBatch({ capacity: 1 });
+    const attempts = await Promise.all(
+      ['91111 11111', '92222 22222', '93333 33333', '94444 44444'].map((phone, i) =>
+        admin('post', '/memberships').send({ ...who, phone, email: `p${i}@example.com`, planId: plan.id, batchId: batch.id, startsOn: START }),
+      ),
+    );
+    expect(attempts.filter((r) => r.status === 201)).toHaveLength(1);
+    for (const r of attempts.filter((a) => a.status !== 201)) expect(r.body.error.code).toBe('BATCH_FULL');
+  });
+});

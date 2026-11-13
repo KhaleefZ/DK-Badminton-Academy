@@ -1,0 +1,14 @@
+{
+  "$schema": "node_modules/wrangler/config-schema.json",
+  // Serves the built React app as static files. Static requests are free and unlimited on Cloudflare.
+  "name": "dk-badminton-website",
+  "compatibility_date": "2026-11-13",
+  "workers_dev": false,
+  // Set the real domain before the first deploy.
+  "routes": [{ "pattern": "example.com", "custom_domain": true }],
+  "assets": {
+    "directory": "./dist",
+    // Any path that isn't a file gets index.html, so React's own routes work after a refresh.
+    "not_found_handling": "single-page-application"
+  }
+}

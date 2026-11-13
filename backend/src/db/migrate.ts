@@ -1,13 +1,18 @@
+import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
-import { migrate } from 'drizzle-orm/node-postgres/migrator';
-import { db, pool } from './client.js';
+import { migrate } from 'drizzle-orm/d1/migrator';
+import type { Db } from './client.js';
 
-const migrationsFolder = fileURLToPath(new URL('../../drizzle', import.meta.url));
+// Production applies these with `wrangler d1 migrations apply dk-badminton --remote`.
+// Tests and local scripts use this, against a local D1.
+export const migrationsFolder = fileURLToPath(new URL('../../drizzle', import.meta.url));
 
-export const runMigrations = () => migrate(db, { migrationsFolder });
+export const runMigrations = (database: Db) => migrate(database, { migrationsFolder });
 
-if (process.argv[1] === fileURLToPath(import.meta.url)) {
-  await runMigrations();
-  await pool.end();
-  console.log('Migrations applied.');
+/** One `CREATE TRIGGER` statement from the rules migration, by name. */
+export function triggerSql(name: string): string {
+  const statements = readFileSync(`${migrationsFolder}/0001_rules.sql`, 'utf8').split('--> statement-breakpoint');
+  const found = statements.find((s) => s.includes(`CREATE TRIGGER ${name} `));
+  if (!found) throw new Error(`No trigger called ${name}`);
+  return found.replace(/^\s*--.*$/gm, '').trim();
 }

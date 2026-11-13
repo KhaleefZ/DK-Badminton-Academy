@@ -8,7 +8,7 @@ import type { Email } from '../src/lib/email.js';
 
 export const PASSWORD = 'correct-horse-battery';
 
-// Hash once: Argon2 is deliberately slow and most tests never check a different password.
+// Hash once: password hashing is deliberately slow and most tests never check a different password.
 const sharedHash = hashPassword(PASSWORD);
 
 export async function addStaff(overrides: Partial<typeof staff.$inferInsert> & { role?: StaffRole } = {}) {

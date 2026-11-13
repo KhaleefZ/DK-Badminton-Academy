@@ -2,9 +2,9 @@ import { Router } from 'express';
 import type { Request, Response } from 'express';
 import { and, asc, eq, gt, inArray, max } from 'drizzle-orm';
 import { z } from 'zod';
-import { db, DB_ERRORS, dbErrorCode, type DbOrTx } from '../db/client.js';
+import { db, DB_ERRORS, dbErrorCode } from '../db/client.js';
 import { closures, courtReservations, courts, openingHours, priceRules, settings } from '../db/schema.js';
-import { writeAudit } from '../lib/audit.js';
+import { auditEntry } from '../lib/audit.js';
 import { AppError, invalid, notFound } from '../lib/errors.js';
 import { toMinutes, toTime } from '../lib/time.js';
 import { parseBody, UUID } from '../lib/validate.js';
@@ -103,8 +103,8 @@ export function settingsRouter(): Router {
   const router = Router();
   router.use(requireSession, requirePasswordCurrent);
   const owner = requirePermission('settings.manage');
-  const audit = (conn: DbOrTx, req: Request, action: string, entityType: string, entityId: string, oldValues?: unknown, newValues?: unknown) =>
-    writeAudit({ action, actorStaffId: currentAuth(req).staff.id, entityType, entityId, oldValues, newValues, req }, conn);
+  const audit = (req: Request, action: string, entityType: string, entityId: string, oldValues?: unknown, newValues?: unknown) =>
+    auditEntry({ action, actorStaffId: currentAuth(req).staff.id, entityType, entityId, oldValues, newValues, req });
 
   // Every role reads this, because the schedule depends on it. Nothing in it is private.
   router.get('/', async (_req, res) => {
@@ -121,36 +121,25 @@ export function settingsRouter(): Router {
   router.patch('/', owner, async (req, res) => {
     const values = parseBody(venueDetails, req.body);
     const [before] = await db.select().from(settings).where(eq(settings.id, 1));
-    const row = await db.transaction(async (tx) => {
-      const [updated] = await tx.update(settings).set({ ...values, updatedAt: new Date() }).where(eq(settings.id, 1)).returning();
-      await audit(tx, req, 'settings.updated', 'settings', '1', before, updated);
-      return updated;
-    });
+    const change = { ...values, updatedAt: new Date() };
+    const [[row]] = await db.batch([db.update(settings).set(change).where(eq(settings.id, 1)).returning(), audit(req, 'settings.updated', 'settings', '1', before, { ...before, ...change })]);
     res.json({ settings: row });
   });
 
   router.post('/courts', owner, async (req, res) => {
     const values = parseBody(courtDetails, req.body);
     const [{ last } = { last: 0 }] = await db.select({ last: max(courts.sortOrder) }).from(courts);
-    const row = await withCourtName(() =>
-      db.transaction(async (tx) => {
-        const [created] = await tx.insert(courts).values({ sortOrder: (last ?? 0) + 1, ...values }).returning();
-        await audit(tx, req, 'court.created', 'court', created!.id, undefined, created);
-        return created;
-      }),
-    );
+    const court = { id: crypto.randomUUID(), sortOrder: (last ?? 0) + 1, ...values };
+    const [[row]] = await withCourtName(() => db.batch([db.insert(courts).values(court).returning(), audit(req, 'court.created', 'court', court.id, undefined, court)]));
     res.status(201).json({ court: row });
   });
 
   router.patch('/courts/:id', owner, async (req, res) => {
     const before = await findCourt(req);
     const values = parseBody(courtDetails, req.body);
-    const row = await withCourtName(() =>
-      db.transaction(async (tx) => {
-        const [updated] = await tx.update(courts).set({ ...values, updatedAt: new Date() }).where(eq(courts.id, before.id)).returning();
-        await audit(tx, req, 'court.updated', 'court', before.id, before, updated);
-        return updated;
-      }),
+    const change = { ...values, updatedAt: new Date() };
+    const [[row]] = await withCourtName(() =>
+      db.batch([db.update(courts).set(change).where(eq(courts.id, before.id)).returning(), audit(req, 'court.updated', 'court', before.id, before, { ...before, ...change })]),
     );
     res.json({ court: row });
   });
@@ -165,11 +154,11 @@ export function settingsRouter(): Router {
         .limit(1);
       if (future.length) throw new AppError(409, 'COURT_HAS_RESERVATIONS', 'This court has upcoming reservations. Move or cancel them first.');
     }
-    const row = await db.transaction(async (tx) => {
-      const [updated] = await tx.update(courts).set({ active, updatedAt: new Date() }).where(eq(courts.id, before.id)).returning();
-      await audit(tx, req, active ? 'court.activated' : 'court.deactivated', 'court', before.id, before, updated);
-      return updated;
-    });
+    const change = { active, updatedAt: new Date() };
+    const [[row]] = await db.batch([
+      db.update(courts).set(change).where(eq(courts.id, before.id)).returning(),
+      audit(req, active ? 'court.activated' : 'court.deactivated', 'court', before.id, before, { ...before, ...change }),
+    ]);
     res.json({ court: row });
   };
   router.post('/courts/:id/deactivate', owner, setActive(false));
@@ -178,10 +167,7 @@ export function settingsRouter(): Router {
   router.delete('/courts/:id', owner, async (req, res) => {
     const before = await findCourt(req);
     try {
-      await db.transaction(async (tx) => {
-        await tx.delete(courts).where(eq(courts.id, before.id));
-        await audit(tx, req, 'court.deleted', 'court', before.id, before);
-      });
+      await db.batch([db.delete(courts).where(eq(courts.id, before.id)), audit(req, 'court.deleted', 'court', before.id, before)]);
     } catch (err) {
       if (dbErrorCode(err) === DB_ERRORS.foreignKeyViolation) {
         throw new AppError(409, 'COURT_IN_USE', 'This court has reservation history, so it can’t be deleted. Deactivate it instead.');
@@ -200,14 +186,12 @@ export function settingsRouter(): Router {
       if (next && next.weekday === p.weekday && next.opens < p.closes) throw invalid(`${WEEKDAYS[p.weekday]} has opening periods that overlap.`);
     });
     const before = await db.select().from(openingHours);
-    const rows = await db.transaction(async (tx) => {
-      await tx.delete(openingHours);
-      const saved = sorted.length
-        ? await tx.insert(openingHours).values(sorted.map((p) => ({ weekday: p.weekday, openMinute: p.opens, closeMinute: p.closes }))).returning()
-        : [];
-      await audit(tx, req, 'settings.hours_updated', 'settings', '1', before.map(hourView), saved.map(hourView));
-      return saved;
-    });
+    const rows = sorted.map((p) => ({ id: crypto.randomUUID(), weekday: p.weekday, openMinute: p.opens, closeMinute: p.closes }));
+    await db.batch([
+      db.delete(openingHours),
+      ...rows.map((row) => db.insert(openingHours).values(row)),
+      audit(req, 'settings.hours_updated', 'settings', '1', before.map(hourView), rows.map(hourView)),
+    ]);
     res.json({ hours: rows.map(hourView) });
   });
 
@@ -223,25 +207,20 @@ export function settingsRouter(): Router {
     });
     await requireKnownCourts(rules.map((r) => r.courtId));
     const before = await db.select().from(priceRules);
-    const rows = await db.transaction(async (tx) => {
-      await tx.delete(priceRules);
-      const saved = rules.length
-        ? await tx.insert(priceRules).values(rules.map((r) => ({ courtId: r.courtId, days: [...new Set(r.days)].sort(), startMinute: r.start, endMinute: r.end, ratePaise: r.ratePaise }))).returning()
-        : [];
-      await audit(tx, req, 'settings.prices_updated', 'settings', '1', before.map(priceView), saved.map(priceView));
-      return saved;
-    });
+    const rows = rules.map((r) => ({ id: crypto.randomUUID(), courtId: r.courtId, days: [...new Set(r.days)].sort(), startMinute: r.start, endMinute: r.end, ratePaise: r.ratePaise }));
+    await db.batch([
+      db.delete(priceRules),
+      ...rows.map((row) => db.insert(priceRules).values(row)),
+      audit(req, 'settings.prices_updated', 'settings', '1', before.map(priceView), rows.map(priceView)),
+    ]);
     res.json({ prices: rows.map(priceView) });
   });
 
   router.post('/closures', owner, async (req, res) => {
     const values = parseBody(closureDetails, req.body);
     await requireKnownCourts([values.courtId]);
-    const row = await db.transaction(async (tx) => {
-      const [created] = await tx.insert(closures).values(values).returning();
-      await audit(tx, req, 'closure.created', 'closure', created!.id, undefined, created);
-      return created;
-    });
+    const closure = { id: crypto.randomUUID(), ...values };
+    const [[row]] = await db.batch([db.insert(closures).values(closure).returning(), audit(req, 'closure.created', 'closure', closure.id, undefined, closure)]);
     res.status(201).json({ closure: row, conflicts: await reservationsDuring(values.courtId, values.startsAt, values.endsAt) });
   });
 
@@ -249,20 +228,13 @@ export function settingsRouter(): Router {
     const before = await findClosure(req);
     const values = parseBody(closureDetails, req.body);
     await requireKnownCourts([values.courtId]);
-    const row = await db.transaction(async (tx) => {
-      const [updated] = await tx.update(closures).set(values).where(eq(closures.id, before.id)).returning();
-      await audit(tx, req, 'closure.updated', 'closure', before.id, before, updated);
-      return updated;
-    });
+    const [[row]] = await db.batch([db.update(closures).set(values).where(eq(closures.id, before.id)).returning(), audit(req, 'closure.updated', 'closure', before.id, before, { ...before, ...values })]);
     res.json({ closure: row, conflicts: await reservationsDuring(values.courtId, values.startsAt, values.endsAt) });
   });
 
   router.delete('/closures/:id', owner, async (req, res) => {
     const before = await findClosure(req);
-    await db.transaction(async (tx) => {
-      await tx.delete(closures).where(eq(closures.id, before.id));
-      await audit(tx, req, 'closure.deleted', 'closure', before.id, before);
-    });
+    await db.batch([db.delete(closures).where(eq(closures.id, before.id)), audit(req, 'closure.deleted', 'closure', before.id, before)]);
     res.status(204).end();
   });
 

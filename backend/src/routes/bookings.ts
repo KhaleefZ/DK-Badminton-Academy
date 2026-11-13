@@ -2,12 +2,12 @@ import { Router } from 'express';
 import type { Request } from 'express';
 import { and, asc, desc, eq, gte, lt, or, sql, type SQL } from 'drizzle-orm';
 import { z } from 'zod';
-import { db, type DbOrTx } from '../db/client.js';
+import { db, previousChanged, runBatch, type Statement } from '../db/client.js';
 import { bookings, courtReservations, courts, customers, messages, paymentMethod, payments } from '../db/schema.js';
-import { writeAudit } from '../lib/audit.js';
+import { auditEntry, auditIfChanged } from '../lib/audit.js';
 import { customerDetails, WALK_IN_NUMBER } from '../lib/customers.js';
 import { AppError, invalid, notFound } from '../lib/errors.js';
-import { customerMatches, likeTerm } from '../lib/search.js';
+import { customerMatches, likeTerm, ilike } from '../lib/search.js';
 import { instantAt, isDate, periodView, toMinutes } from '../lib/time.js';
 import { parseBody, UUID } from '../lib/validate.js';
 import { hashToken } from '../auth/crypto.js';
@@ -15,9 +15,9 @@ import { currentAuth, requirePasswordCurrent, requirePermission, requireSession 
 import { bookingToken, customerWhatsappUrl } from '../messages/links.js';
 import { enqueueBookingMessage } from '../messages/queue.js';
 import { quote, releaseExpiredHolds } from '../schedule/availability.js';
-import { createReservation, moveReservation, requireOpen, setReservationStatus } from '../schedule/reservations.js';
+import { prepareMove, prepareReservation, requireOpen, setReservationStatus } from '../schedule/reservations.js';
 
-const paidSql = sql<number>`coalesce((SELECT sum(p.amount_paise) FROM payments p WHERE p.booking_id = bookings.id AND p.voided_at IS NULL), 0)::int`;
+const paidSql = sql<number>`coalesce((SELECT sum(p.amount_paise) FROM payments p WHERE p.booking_id = bookings.id AND p.voided_at IS NULL), 0)`;
 
 /** A date and two times, checked and turned into minutes. Used by bookings and blocks. */
 export const courtTime = z
@@ -101,18 +101,17 @@ export async function bookingViews(where: SQL | undefined, limit = 500) {
   return rows.map((row) => bookingView(row));
 }
 
-export const bookingSearch = (q: string) => or(sql`${bookings.bookingNo} ILIKE ${likeTerm(q)}`, sql`${bookings.notes} ILIKE ${likeTerm(q)}`, customerMatches(q));
+export const bookingSearch = (q: string) => or(sql`${ilike(bookings.bookingNo, likeTerm(q))}`, sql`${ilike(bookings.notes, likeTerm(q))}`, customerMatches(q));
 
-/** Locks the booking, so two people can't pay against or change it at the same moment. */
-async function lockBooking(conn: DbOrTx, id: string) {
-  const [row] = await conn.select().from(bookings).where(eq(bookings.id, id)).for('update');
+async function findBooking(id: string) {
+  const [row] = await db.select().from(bookings).where(eq(bookings.id, id));
   if (!row) throw notFound('That booking');
   return row;
 }
 
-const paidOn = async (conn: DbOrTx, bookingId: string) => {
-  const [row] = await conn
-    .select({ paid: sql<number>`coalesce(sum(${payments.amountPaise}), 0)::int` })
+const paidOn = async (bookingId: string) => {
+  const [row] = await db
+    .select({ paid: sql<number>`coalesce(sum(${payments.amountPaise}), 0)` })
     .from(payments)
     .where(and(eq(payments.bookingId, bookingId), sql`${payments.voidedAt} IS NULL`));
   return row!.paid;
@@ -145,8 +144,10 @@ export function bookingsRouter(): Router {
   const router = Router();
   router.use(requireSession, requirePasswordCurrent, requirePermission('bookings.manage'));
   const actor = (req: Request) => currentAuth(req).staff.id;
-  const audit = (conn: DbOrTx, req: Request, action: string, entityId: string, oldValues?: unknown, newValues?: unknown) =>
-    writeAudit({ action, actorStaffId: actor(req), entityType: 'booking', entityId, oldValues, newValues, req }, conn);
+  const audit = (req: Request, action: string, entityId: string, oldValues?: unknown, newValues?: unknown) =>
+    auditEntry({ action, actorStaffId: actor(req), entityType: 'booking', entityId, oldValues, newValues, req });
+  const auditIfDone = (req: Request, action: string, entityId: string, oldValues?: unknown, newValues?: unknown) =>
+    auditIfChanged({ action, actorStaffId: actor(req), entityType: 'booking', entityId, oldValues, newValues, req });
 
   router.get('/', async (req, res) => {
     const { date, q, payment, session } = req.query;
@@ -175,27 +176,34 @@ export function bookingsRouter(): Router {
     const details = parseBody(newBooking, req.body);
     if (!details.customerId && !details.newCustomer) throw invalid('Choose a customer.');
 
-    const created = await db.transaction(async (tx) => {
-      await requireOpen(time.date, time.start, time.end, tx);
-      const amountPaise = details.amountPaise ?? (await quote(time.courtId, time.date, time.start, time.end, tx));
-      if (amountPaise === null) throw invalid('No price is set for this time, so enter an amount.', 'NO_PRICE');
+    await requireOpen(time.date, time.start, time.end);
+    const amountPaise = details.amountPaise ?? (await quote(time.courtId, time.date, time.start, time.end));
+    if (amountPaise === null) throw invalid('No price is set for this time, so enter an amount.', 'NO_PRICE');
 
-      let customerId = details.customerId;
-      if (customerId) {
-        const [found] = await tx.select().from(customers).where(eq(customers.id, customerId));
-        if (!found || found.deletedAt) throw invalid('Choose a customer.');
-      } else {
-        const [customer] = await tx.insert(customers).values({ ...details.newCustomer!, type: 'walk_in', customerNo: WALK_IN_NUMBER }).returning();
-        customerId = customer!.id;
-        await writeAudit({ action: 'customer.created', actorStaffId: actor(req), entityType: 'customer', entityId: customerId, newValues: customer, req }, tx);
-      }
-      const reservation = await createReservation({ courtId: time.courtId, kind: 'booking', startsAt: time.startsAt, endsAt: time.endsAt, createdBy: actor(req) }, tx);
-      const id = crypto.randomUUID();
-      const [row] = await tx.insert(bookings).values({ id, customerId, reservationId: reservation.id, amountPaise, notes: details.notes, createdBy: actor(req), accessTokenHash: hashToken(bookingToken(id)) }).returning();
-      await audit(tx, req, 'booking.created', row!.id, undefined, { ...row, accessTokenHash: undefined, ...time });
-      await enqueueBookingMessage(tx, row!.id, 'confirmed', actor(req));
-      return row!;
-    });
+    const steps: Statement[] = [];
+    let customerId = details.customerId;
+    if (customerId) {
+      const [found] = await db.select().from(customers).where(eq(customers.id, customerId));
+      if (!found || found.deletedAt) throw invalid('Choose a customer.');
+    } else {
+      customerId = crypto.randomUUID();
+      steps.push(
+        db.insert(customers).values({ ...details.newCustomer!, id: customerId, type: 'walk_in', customerNo: WALK_IN_NUMBER() }),
+        auditEntry({ action: 'customer.created', actorStaffId: actor(req), entityType: 'customer', entityId: customerId, newValues: { ...details.newCustomer, id: customerId, type: 'walk_in' }, req }),
+      );
+    }
+    const reservation = await prepareReservation({ courtId: time.courtId, kind: 'booking', startsAt: time.startsAt, endsAt: time.endsAt, createdBy: actor(req) });
+    const id = crypto.randomUUID();
+    const booking = { id, customerId, reservationId: reservation.id, amountPaise, notes: details.notes, createdBy: actor(req) };
+    // All or nothing: if the court was taken meanwhile, the database refuses the lot and no customer is left behind.
+    await runBatch([
+      ...steps,
+      reservation.insert,
+      db.insert(bookings).values({ ...booking, accessTokenHash: hashToken(bookingToken(id)) }),
+      audit(req, 'booking.created', id, undefined, { ...booking, ...time }),
+    ]);
+    await enqueueBookingMessage(id, 'confirmed', actor(req));
+    const created = { id };
     res.status(201).json({ booking: await findOne(eq(bookings.id, created.id)) });
   });
 
@@ -217,60 +225,72 @@ export function bookingsRouter(): Router {
     const id = requireId(req);
     const time = parseBody(courtTime, req.body);
     const details = parseBody(bookingExtras, req.body);
-    await db.transaction(async (tx) => {
-      const before = await lockBooking(tx, id);
-      if (before.status !== 'active') throw invalid('Only a confirmed booking can be edited.', 'BOOKING_CANCELLED');
-      const [reservation] = await tx.select().from(courtReservations).where(eq(courtReservations.id, before.reservationId));
-      const moved = reservation!.courtId !== time.courtId || reservation!.startsAt.getTime() !== time.startsAt.getTime() || reservation!.endsAt.getTime() !== time.endsAt.getTime();
-      if (moved) {
-        await requireOpen(time.date, time.start, time.end, tx);
-        await moveReservation(before.reservationId, { courtId: time.courtId, startsAt: time.startsAt, endsAt: time.endsAt }, tx);
-      }
-      const amountPaise = details.amountPaise ?? before.amountPaise;
-      if (amountPaise < (await paidOn(tx, id))) throw invalid('The amount can’t be less than what’s already been paid. Void a payment first.', 'BELOW_PAID');
-      const [row] = await tx.update(bookings).set({ amountPaise, notes: details.notes, updatedAt: new Date() }).where(eq(bookings.id, id)).returning();
-      await audit(tx, req, 'booking.updated', id, { ...before, accessTokenHash: undefined, startsAt: reservation!.startsAt, endsAt: reservation!.endsAt, courtId: reservation!.courtId }, { ...row, accessTokenHash: undefined, ...time });
-      if (moved) await enqueueBookingMessage(tx, id, 'changed', actor(req));
-    });
+    const before = await findBooking(id);
+    if (before.status !== 'active') throw invalid('Only a confirmed booking can be edited.', 'BOOKING_CANCELLED');
+    const [reservation] = await db.select().from(courtReservations).where(eq(courtReservations.id, before.reservationId));
+    const moved = reservation!.courtId !== time.courtId || reservation!.startsAt.getTime() !== time.startsAt.getTime() || reservation!.endsAt.getTime() !== time.endsAt.getTime();
+    const steps: Statement[] = [];
+    if (moved) {
+      await requireOpen(time.date, time.start, time.end);
+      steps.push((await prepareMove(before.reservationId, { courtId: time.courtId, startsAt: time.startsAt, endsAt: time.endsAt })).update);
+    }
+    const amountPaise = details.amountPaise ?? before.amountPaise;
+    if (amountPaise < (await paidOn(id))) throw invalid('The amount can’t be less than what’s already been paid. Void a payment first.', 'BELOW_PAID');
+    const change = { amountPaise, notes: details.notes, updatedAt: new Date() };
+    await runBatch([
+      ...steps,
+      db.update(bookings).set(change).where(eq(bookings.id, id)),
+      audit(req, 'booking.updated', id, { ...before, accessTokenHash: undefined, startsAt: reservation!.startsAt, endsAt: reservation!.endsAt, courtId: reservation!.courtId }, { ...before, ...change, accessTokenHash: undefined, ...time }),
+    ]);
+    if (moved) await enqueueBookingMessage(id, 'changed', actor(req));
     res.json({ booking: await findOne(eq(bookings.id, id)) });
   });
 
   router.post('/:id/cancel', async (req, res) => {
     const id = requireId(req);
     const { reason: cancelReason } = parseBody(reason, req.body ?? {});
-    await db.transaction(async (tx) => {
-      const before = await lockBooking(tx, id);
-      if (before.status === 'cancelled' || before.status === 'expired') throw invalid('This booking is already cancelled.', 'BOOKING_CANCELLED');
-      await setReservationStatus(before.reservationId, 'released', tx);
-      await tx.update(bookings).set({ status: 'cancelled', cancelReason, cancelledAt: new Date(), updatedAt: new Date() }).where(eq(bookings.id, id));
-      await audit(tx, req, 'booking.cancelled', id, undefined, { cancelReason });
-      // Someone who never finished paying was never told they had a booking.
-      if (before.status === 'active') await enqueueBookingMessage(tx, id, 'cancelled', actor(req));
-    });
+    const before = await findBooking(id);
+    if (before.status === 'cancelled' || before.status === 'expired') throw invalid('This booking is already cancelled.', 'BOOKING_CANCELLED');
+    // The booking changes only if it's still in the state just read; the slot and record follow only if it did.
+    const [cancelled] = await db.batch([
+      db
+        .update(bookings)
+        .set({ status: 'cancelled', cancelReason, cancelledAt: new Date(), updatedAt: new Date() })
+        .where(and(eq(bookings.id, id), eq(bookings.status, before.status)))
+        .returning({ id: bookings.id }),
+      db.update(courtReservations).set({ status: 'released' }).where(and(eq(courtReservations.id, before.reservationId), previousChanged)),
+      auditIfDone(req, 'booking.cancelled', id, undefined, { cancelReason }),
+    ]);
+    if (!cancelled.length) throw invalid('This booking is already cancelled.', 'BOOKING_CANCELLED');
+    // Someone who never finished paying was never told they had a booking.
+    if (before.status === 'active') await enqueueBookingMessage(id, 'cancelled', actor(req));
     res.json({ booking: await findOne(eq(bookings.id, id)) });
   });
 
   router.post('/:id/restore', async (req, res) => {
     const id = requireId(req);
-    await db.transaction(async (tx) => {
-      const before = await lockBooking(tx, id);
-      if (before.status !== 'cancelled') throw invalid('Only a cancelled booking can be restored.', 'BOOKING_ACTIVE');
-      // If someone else has taken the time since, the database refuses this with SLOT_TAKEN.
-      await setReservationStatus(before.reservationId, 'active', tx);
-      await tx.update(bookings).set({ status: 'active', cancelReason: null, cancelledAt: null, updatedAt: new Date() }).where(eq(bookings.id, id));
-      await audit(tx, req, 'booking.restored', id);
-      await enqueueBookingMessage(tx, id, 'confirmed', actor(req));
-    });
+    const before = await findBooking(id);
+    if (before.status !== 'cancelled') throw invalid('Only a cancelled booking can be restored.', 'BOOKING_ACTIVE');
+    // If someone else has taken the time since, the database refuses this with SLOT_TAKEN and nothing changes.
+    const [restored] = await db.batch([
+      db
+        .update(bookings)
+        .set({ status: 'active', cancelReason: null, cancelledAt: null, updatedAt: new Date() })
+        .where(and(eq(bookings.id, id), eq(bookings.status, 'cancelled')))
+        .returning({ id: bookings.id }),
+      db.update(courtReservations).set({ status: 'active' }).where(and(eq(courtReservations.id, before.reservationId), previousChanged)),
+      auditIfDone(req, 'booking.restored', id),
+    ]);
+    if (!restored.length) throw invalid('Only a cancelled booking can be restored.', 'BOOKING_ACTIVE');
+    await enqueueBookingMessage(id, 'confirmed', actor(req));
     res.json({ booking: await findOne(eq(bookings.id, id)) });
   });
 
   router.post('/:id/resend-email', requirePermission('messages.manage'), async (req, res) => {
     const id = requireId(req);
-    const queued = await db.transaction(async (tx) => {
-      const booking = await lockBooking(tx, id);
-      if (booking.status !== 'active') throw invalid('Only a confirmed booking can be resent.', 'BOOKING_CANCELLED');
-      return enqueueBookingMessage(tx, id, 'confirmed', actor(req));
-    });
+    const booking = await findBooking(id);
+    if (booking.status !== 'active') throw invalid('Only a confirmed booking can be resent.', 'BOOKING_CANCELLED');
+    const queued = await enqueueBookingMessage(id, 'confirmed', actor(req));
     if (!queued) throw invalid('This customer has no email address.', 'NO_EMAIL');
     res.status(202).json({ queued: true });
   });
@@ -296,16 +316,17 @@ export function bookingsRouter(): Router {
   router.post('/:id/payments', requirePermission('payments.record'), async (req, res) => {
     const id = requireId(req);
     const values = parseBody(paymentDetails, req.body);
-    const receipt = await db.transaction(async (tx) => {
-      const booking = await lockBooking(tx, id);
-      if (booking.status !== 'active') throw invalid('Only a confirmed booking can take a payment.', 'BOOKING_CANCELLED');
-      const left = booking.amountPaise - (await paidOn(tx, id));
-      if (values.amountPaise > left) throw new AppError(409, 'OVERPAYMENT', 'That’s more than this booking still owes. Refresh and check the balance.');
-      const [row] = await tx.insert(payments).values({ ...values, bookingId: id, recordedBy: actor(req) }).returning();
-      await writeAudit({ action: 'payment.recorded', actorStaffId: actor(req), entityType: 'payment', entityId: row!.id, newValues: row, req }, tx);
-      return row!;
-    });
-    res.status(201).json({ payment: paymentView(receipt), booking: await findOne(eq(bookings.id, id)) });
+    const booking = await findBooking(id);
+    if (booking.status !== 'active') throw invalid('Only a confirmed booking can take a payment.', 'BOOKING_CANCELLED');
+    const left = booking.amountPaise - (await paidOn(id));
+    if (values.amountPaise > left) throw new AppError(409, 'OVERPAYMENT', 'That’s more than this booking still owes. Refresh and check the balance.');
+    // A database trigger repeats the "still owed" check, so two receipts entered at once can't overpay.
+    const payment = { id: crypto.randomUUID(), ...values, bookingId: id, recordedBy: actor(req) };
+    const [[receipt]] = await db.batch([
+      db.insert(payments).values(payment).returning(),
+      auditEntry({ action: 'payment.recorded', actorStaffId: actor(req), entityType: 'payment', entityId: payment.id, newValues: payment, req }),
+    ]);
+    res.status(201).json({ payment: paymentView(receipt!), booking: await findOne(eq(bookings.id, id)) });
   });
 
   return router;

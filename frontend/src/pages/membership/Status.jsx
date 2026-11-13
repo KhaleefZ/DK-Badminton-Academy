@@ -3,14 +3,16 @@ import { useParams } from 'react-router-dom';
 import Button from '../../components/Button';
 import Notice from '../../components/Notice';
 import { formatLong, formatPaise } from '../../booking/schedule';
+import PayButtons from '../../booking/PayButtons';
 import { api } from '../../lib/api';
+import { usePaymentInfo } from '../../lib/payments';
 import { useVenue, whatsappLink } from '../../lib/useVenue';
 import { fill, useContent } from '../../lib/site';
 
 const remaining = (until) => Math.max(0, Math.ceil((new Date(until).getTime() - Date.now()) / 1000));
 const clock = (seconds) => `${Math.floor(seconds / 60)}:${String(seconds % 60).padStart(2, '0')}`;
 
-/** The private page for one membership, and its test payment while one is waiting. */
+/** The private page for one membership, and its payment while one is waiting. */
 export default function Status() {
   const { token } = useParams();
   const [m, setM] = useState(null);
@@ -20,6 +22,7 @@ export default function Status() {
   const [pending, setPending] = useState(false);
   const venue = useVenue();
   const text = useContent().membership.status;
+  const info = usePaymentInfo();
 
   const load = useCallback(async () => {
     try {
@@ -96,18 +99,11 @@ export default function Status() {
             </section>
             {waiting && (
               <>
-                <Notice>{text.testModeNotice}</Notice>
+                {info?.testMode && <Notice>{text.testModeNotice}</Notice>}
                 <p className="lead" role="timer">
                   {text.timerBefore} <strong>{seconds === null ? '…' : clock(seconds)}</strong> {text.timerAfter}
                 </p>
-                <div className="button-row">
-                  <Button icon={false} disabled={pending} aria-busy={pending} onClick={() => act('pay', { result: 'success' })}>
-                    Pay {formatPaise(m.amountPaise)} (test)
-                  </Button>
-                  <Button variant="secondary" icon={false} disabled={pending} onClick={() => act('pay', { result: 'failure' })}>
-                    Simulate a failed payment
-                  </Button>
-                </div>
+                <PayButtons info={info} base={`/memberships/${token}`} recordKey="membership" amountPaise={m.amountPaise} text={text} onSettled={setM} onExpired={load} />
                 <button type="button" className="link-button fine" disabled={pending} onClick={() => act('release')}>
                   {text.releaseButton}
                 </button>

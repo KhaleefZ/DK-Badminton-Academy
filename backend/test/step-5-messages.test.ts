@@ -91,7 +91,7 @@ describe('sender settings', () => {
     const { body } = await admin('post', '/messages/settings/test').expect(200);
     expect(body.sentTo).toBe('owner@example.com');
     expect(sent[0]!.to).toBe('owner@example.com');
-    mailer.send = () => Promise.reject(Object.assign(new Error('535 raw gmail text'), { code: 'EAUTH' }));
+    mailer.send = () => Promise.reject(new Error('Failed to plain authentication: 535-5.7.8 Username and Password not accepted'));
     const res = await admin('post', '/messages/settings/test').expect(502);
     expect(res.body.error.message).toMatch(/app password/);
     expect(res.body.error.message).not.toMatch(/raw gmail/);
@@ -198,7 +198,7 @@ describe('sending', () => {
 
   it('retries with growing gaps, then gives up and can be retried by hand', async () => {
     await book();
-    const broken: Mailer = { send: () => Promise.reject(Object.assign(new Error('x'), { code: 'EAUTH' })) };
+    const broken: Mailer = { send: () => Promise.reject(new Error('Failed to plain authentication: 535 5.7.8')) };
     let at = Date.now();
     const gaps = [1, 5, 15, 60];
     for (let i = 0; i < 5; i += 1) {
@@ -254,9 +254,9 @@ describe('sending', () => {
   });
 
   it('turns mail errors into plain advice', () => {
-    expect(friendlyMailError({ responseCode: 535 })).toMatch(/app password/);
-    expect(friendlyMailError({ code: 'ETIMEDOUT' })).toMatch(/try again/);
-    expect(friendlyMailError({ responseCode: 550 })).toMatch(/refused/);
+    expect(friendlyMailError(new Error('Failed to plain authentication: 535-5.7.8 Username and Password not accepted'))).toMatch(/app password/);
+    expect(friendlyMailError(new Error('Timeout while waiting for smtp server response'))).toMatch(/try again/);
+    expect(friendlyMailError(new Error('Invalid RCPT TO: <x@y> 550 5.1.1 No such user'))).toMatch(/refused/);
   });
 });
 

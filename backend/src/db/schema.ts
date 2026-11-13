@@ -1,119 +1,165 @@
-import { sql } from 'drizzle-orm';
-import type { AnyPgColumn } from 'drizzle-orm/pg-core';
-import { bigserial, boolean, check, customType, date, index, integer, jsonb, pgEnum, pgSequence, pgTable, primaryKey, text, timestamp, uniqueIndex, uuid } from 'drizzle-orm/pg-core';
-
-export const staffRole = pgEnum('staff_role', ['owner', 'manager', 'front_desk']);
-export const staffStatus = pgEnum('staff_status', ['active', 'inactive']);
-export const reservationKind = pgEnum('reservation_kind', ['booking', 'member_block', 'staff_block']);
-export const reservationStatus = pgEnum('reservation_status', ['active', 'released']);
-export const customerType = pgEnum('customer_type', ['walk_in', 'website']);
-export const bookingStatus = pgEnum('booking_status', ['active', 'cancelled', 'pending_payment', 'expired']);
-export const bookingSource = pgEnum('booking_source', ['admin', 'website']);
-export const paymentMethod = pgEnum('payment_method', ['cash', 'upi', 'online_test'])
-export const enquiryStatus = pgEnum('enquiry_status', ['new', 'handled'])
-export const membershipKind = pgEnum('membership_kind', ['individual', 'court']);
-export const membershipStatus = pgEnum('membership_status', ['active', 'cancelled', 'pending_payment', 'expired']);
-export const discountType = pgEnum('discount_type', ['percent', 'fixed']);
-export const messageChannel = pgEnum('message_channel', ['email', 'whatsapp']);
-export const messageStatus = pgEnum('message_status', ['queued', 'sending', 'sent', 'failed', 'expired', 'cancelled']);;
-
-// Staff numbers come from a sequence so a number is never reused, even after a delete.
-export const staffNumberSeq = pgSequence('staff_number_seq');
-export const walkInNumberSeq = pgSequence('walk_in_number_seq');
-export const websiteNumberSeq = pgSequence('website_number_seq');
-export const bookingNumberSeq = pgSequence('booking_number_seq');
-export const receiptNumberSeq = pgSequence('receipt_number_seq');
-export const enquiryNumberSeq = pgSequence('enquiry_number_seq');
-export const individualNumberSeq = pgSequence('individual_member_number_seq');
-export const courtMemberNumberSeq = pgSequence('court_member_number_seq');
-
-const timestamptz = (name: string) => timestamp(name, { withTimezone: true });
+import { sql, type SQL } from 'drizzle-orm';
+import type { AnySQLiteColumn } from 'drizzle-orm/sqlite-core';
+import { check, index, integer, primaryKey, sqliteTable, text, uniqueIndex } from 'drizzle-orm/sqlite-core';
 
 /**
- * Admin accounts. Two database triggers (see the migration) enforce the rules that must hold
- * however a row is changed: at most 5 active accounts, and always one active Owner.
+ * The database is SQLite (Cloudflare D1). Rules that must hold however a row is changed live in
+ * triggers in drizzle/0001_rules.sql: at most 5 active staff, always one active Owner, no two
+ * active reservations on one court at once, and record numbers that are never reused.
  */
-export const staff = pgTable(
+
+/** A text column limited to a fixed list, with the list kept for validation in routes. */
+function enumType<const T extends readonly [string, ...string[]]>(values: T) {
+  const column = (name: string) => text(name, { enum: values as unknown as [T[number], ...T[number][]] });
+  return Object.assign(column, { enumValues: values as unknown as [T[number], ...T[number][]] });
+}
+const inList = (column: AnySQLiteColumn, values: readonly string[]) => sql.raw(`"${column.name}" IN (${values.map((v) => `'${v}'`).join(', ')})`);
+
+export const staffRole = enumType(['owner', 'manager', 'front_desk']);
+export const staffStatus = enumType(['active', 'inactive']);
+export const reservationKind = enumType(['booking', 'member_block', 'staff_block']);
+export const reservationStatus = enumType(['active', 'released']);
+export const customerType = enumType(['walk_in', 'website']);
+export const bookingStatus = enumType(['active', 'cancelled', 'pending_payment', 'expired']);
+export const bookingSource = enumType(['admin', 'website']);
+// online = through the payment gateway; online_test = the local simulator, which moves no money.
+export const paymentMethod = enumType(['cash', 'upi', 'online', 'online_test']);
+export const paymentGateway = enumType(['cashfree', 'razorpay']);
+export const gatewayMode = enumType(['test', 'live']);
+export const enquiryStatus = enumType(['new', 'handled']);
+export const membershipKind = enumType(['individual', 'court']);
+export const membershipStatus = enumType(['active', 'cancelled', 'pending_payment', 'expired']);
+export const discountType = enumType(['percent', 'fixed']);
+export const messageChannel = enumType(['email', 'whatsapp']);
+export const messageStatus = enumType(['queued', 'sending', 'sent', 'failed', 'expired', 'cancelled']);
+
+/** Milliseconds since 1970, read and written as a Date. */
+const timestamp = (name: string) => integer(name, { mode: 'timestamp_ms' });
+const NOW_MS = sql`(cast(unixepoch('subsec') * 1000 as integer))`;
+const createdNow = (name: string) => timestamp(name).notNull().default(NOW_MS);
+const flag = (name: string) => integer(name, { mode: 'boolean' });
+/** 'YYYY-MM-DD', which sorts and compares like a date. */
+const day = (name: string) => text(name);
+const json = <T>(name: string) => text(name, { mode: 'json' }).$type<T>();
+const id = () => text('id').primaryKey().$defaultFn(() => crypto.randomUUID());
+
+/**
+ * A phone's digits only, worked out by the database from the phone column so it can never go stale.
+ * Phones are validated as +, digits, spaces and hyphens, so stripping those leaves the digits.
+ */
+const STRIPPED_FROM_PHONES = [32, 45, 43, 9, 10, 11, 12, 13, 160]; // space - + and the whitespace characters
+const phoneDigitsOf = (column: string) =>
+  text(`${column}_digits`).generatedAlwaysAs(
+    sql.raw(STRIPPED_FROM_PHONES.reduce((expr, code) => `replace(${expr}, char(${code}), '')`, `"${column}"`)),
+    { mode: 'virtual' },
+  );
+
+/**
+ * Record numbers such as BKG-00042. The insert reads the next value here, and a trigger on the
+ * table moves the counter on, both inside the one statement, so a number is never handed out twice
+ * or reused after a delete.
+ */
+export const counters = sqliteTable('counters', {
+  prefix: text('prefix').primaryKey(),
+  value: integer('value').notNull().default(0),
+});
+
+export const nextNumber = (prefix: string, width: number): SQL<string> =>
+  sql<string>`(SELECT printf(${`${prefix}%0${width}d`}, value + 1) FROM counters WHERE prefix = ${prefix})`;
+
+/** On a booking or membership paid online: the gateway's order, when it was made, and when the cron last asked about it. */
+const gatewayOrderColumns = () => ({
+  gatewayOrderId: text('gateway_order_id'),
+  gatewayOrderAt: timestamp('gateway_order_at'),
+  gatewayCheckedAt: timestamp('gateway_checked_at'),
+});
+
+/** Admin accounts. Triggers keep at most 5 active accounts and always one active Owner. */
+export const staff = sqliteTable(
   'staff',
   {
-    id: uuid('id').primaryKey().defaultRandom(),
+    id: id(),
     staffNo: text('staff_no')
       .notNull()
       .unique()
-      .default(sql`dk_number('STF-', nextval('staff_number_seq'), 3)`),
+      .$defaultFn(() => nextNumber('STF-', 3)),
     name: text('name').notNull(),
     email: text('email').notNull(),
     phone: text('phone'),
     role: staffRole('role').notNull(),
     status: staffStatus('status').notNull().default('active'),
     passwordHash: text('password_hash').notNull(),
-    mustChangePassword: boolean('must_change_password').notNull().default(false),
+    mustChangePassword: flag('must_change_password').notNull().default(false),
     failedLoginAttempts: integer('failed_login_attempts').notNull().default(0),
-    lockedUntil: timestamptz('locked_until'),
-    lastLoginAt: timestamptz('last_login_at'),
-    passwordChangedAt: timestamptz('password_changed_at').notNull().defaultNow(),
-    deletedAt: timestamptz('deleted_at'),
-    createdAt: timestamptz('created_at').notNull().defaultNow(),
-    updatedAt: timestamptz('updated_at').notNull().defaultNow(),
+    lockedUntil: timestamp('locked_until'),
+    lastLoginAt: timestamp('last_login_at'),
+    passwordChangedAt: createdNow('password_changed_at'),
+    deletedAt: timestamp('deleted_at'),
+    createdAt: createdNow('created_at'),
+    updatedAt: createdNow('updated_at'),
   },
   // A deleted account keeps its row for history, so its email can be used again.
-  (t) => [uniqueIndex('staff_email_unique').on(sql`lower(${t.email})`).where(sql`${t.deletedAt} IS NULL`)],
+  (t) => [
+    uniqueIndex('staff_email_unique').on(sql`lower(${t.email})`).where(sql`${t.deletedAt} IS NULL`),
+    check('staff_role_valid', inList(t.role, staffRole.enumValues)),
+    check('staff_status_valid', inList(t.status, staffStatus.enumValues)),
+  ],
 );
 
 /** Only the SHA-256 hash of a session token is stored, so a database leak exposes no sessions. */
-export const adminSessions = pgTable(
+export const adminSessions = sqliteTable(
   'admin_sessions',
   {
-    id: uuid('id').primaryKey().defaultRandom(),
-    staffId: uuid('staff_id')
+    id: id(),
+    staffId: text('staff_id')
       .notNull()
       .references(() => staff.id, { onDelete: 'cascade' }),
     tokenHash: text('token_hash').notNull().unique(),
-    remember: boolean('remember').notNull().default(false),
+    remember: flag('remember').notNull().default(false),
     ip: text('ip'),
     userAgent: text('user_agent'),
-    createdAt: timestamptz('created_at').notNull().defaultNow(),
-    lastSeenAt: timestamptz('last_seen_at').notNull().defaultNow(),
-    expiresAt: timestamptz('expires_at').notNull(),
+    createdAt: createdNow('created_at'),
+    lastSeenAt: createdNow('last_seen_at'),
+    expiresAt: timestamp('expires_at').notNull(),
   },
   (t) => [index('admin_sessions_staff_idx').on(t.staffId), index('admin_sessions_expires_idx').on(t.expiresAt)],
 );
 
-export const passwordResetTokens = pgTable(
+export const passwordResetTokens = sqliteTable(
   'password_reset_tokens',
   {
-    id: uuid('id').primaryKey().defaultRandom(),
-    staffId: uuid('staff_id')
+    id: id(),
+    staffId: text('staff_id')
       .notNull()
       .references(() => staff.id, { onDelete: 'cascade' }),
     tokenHash: text('token_hash').notNull().unique(),
-    expiresAt: timestamptz('expires_at').notNull(),
-    usedAt: timestamptz('used_at'),
-    createdAt: timestamptz('created_at').notNull().defaultNow(),
+    expiresAt: timestamp('expires_at').notNull(),
+    usedAt: timestamp('used_at'),
+    createdAt: createdNow('created_at'),
   },
   (t) => [index('password_reset_tokens_staff_idx').on(t.staffId)],
 );
 
 /** Who changed what. Never store passwords, password hashes or tokens here. */
-export const auditLog = pgTable(
+export const auditLog = sqliteTable(
   'audit_log',
   {
-    id: bigserial('id', { mode: 'number' }).primaryKey(),
-    actorStaffId: uuid('actor_staff_id').references(() => staff.id, { onDelete: 'set null' }),
+    id: integer('id').primaryKey({ autoIncrement: true }),
+    actorStaffId: text('actor_staff_id').references(() => staff.id, { onDelete: 'set null' }),
     action: text('action').notNull(),
     entityType: text('entity_type'),
     entityId: text('entity_id'),
-    oldValues: jsonb('old_values'),
-    newValues: jsonb('new_values'),
+    oldValues: json<unknown>('old_values'),
+    newValues: json<unknown>('new_values'),
     ip: text('ip'),
     userAgent: text('user_agent'),
-    createdAt: timestamptz('created_at').notNull().defaultNow(),
+    createdAt: createdNow('created_at'),
   },
   (t) => [index('audit_log_entity_idx').on(t.entityType, t.entityId, t.createdAt), index('audit_log_actor_idx').on(t.actorStaffId)],
 );
 
 /** One row only (id 1). Times of day are stored as minutes from midnight; 1440 is the end of the day. */
-export const settings = pgTable(
+export const settings = sqliteTable(
   'settings',
   {
     id: integer('id').primaryKey().default(1),
@@ -125,29 +171,29 @@ export const settings = pgTable(
     advanceBookingDays: integer('advance_booking_days').notNull().default(7),
     minNoticeMinutes: integer('min_notice_minutes').notNull().default(60),
     holdMinutes: integer('hold_minutes').notNull().default(10),
-    updatedAt: timestamptz('updated_at').notNull().defaultNow(),
+    updatedAt: createdNow('updated_at'),
   },
   (t) => [check('settings_single_row', sql`${t.id} = 1`), check('settings_slot_minutes', sql`${t.slotMinutes} IN (30, 60)`)],
 );
 
-export const courts = pgTable(
+export const courts = sqliteTable(
   'courts',
   {
-    id: uuid('id').primaryKey().defaultRandom(),
+    id: id(),
     name: text('name').notNull(),
-    active: boolean('active').notNull().default(true),
+    active: flag('active').notNull().default(true),
     sortOrder: integer('sort_order').notNull().default(0),
-    createdAt: timestamptz('created_at').notNull().defaultNow(),
-    updatedAt: timestamptz('updated_at').notNull().defaultNow(),
+    createdAt: createdNow('created_at'),
+    updatedAt: createdNow('updated_at'),
   },
   (t) => [uniqueIndex('courts_name_unique').on(sql`lower(${t.name})`)],
 );
 
 /** Weekday 0 is Sunday. A day with no rows is closed, and a day may have a morning and an evening period. */
-export const openingHours = pgTable(
+export const openingHours = sqliteTable(
   'opening_hours',
   {
-    id: uuid('id').primaryKey().defaultRandom(),
+    id: id(),
     weekday: integer('weekday').notNull(),
     openMinute: integer('open_minute').notNull(),
     closeMinute: integer('close_minute').notNull(),
@@ -160,12 +206,12 @@ export const openingHours = pgTable(
 );
 
 /** An hourly rate. A rule for one court wins over a rule for all courts (no court set). */
-export const priceRules = pgTable(
+export const priceRules = sqliteTable(
   'price_rules',
   {
-    id: uuid('id').primaryKey().defaultRandom(),
-    courtId: uuid('court_id').references(() => courts.id, { onDelete: 'cascade' }),
-    days: integer('days').array().notNull(),
+    id: id(),
+    courtId: text('court_id').references(() => courts.id, { onDelete: 'cascade' }),
+    days: json<number[]>('days').notNull(),
     startMinute: integer('start_minute').notNull(),
     endMinute: integer('end_minute').notNull(),
     ratePaise: integer('rate_paise').notNull(),
@@ -177,75 +223,90 @@ export const priceRules = pgTable(
 );
 
 /** A court, or the whole venue when no court is set, is shut for this period. */
-export const closures = pgTable(
+export const closures = sqliteTable(
   'closures',
   {
-    id: uuid('id').primaryKey().defaultRandom(),
-    courtId: uuid('court_id').references(() => courts.id, { onDelete: 'cascade' }),
-    startsAt: timestamptz('starts_at').notNull(),
-    endsAt: timestamptz('ends_at').notNull(),
+    id: id(),
+    courtId: text('court_id').references(() => courts.id, { onDelete: 'cascade' }),
+    startsAt: timestamp('starts_at').notNull(),
+    endsAt: timestamp('ends_at').notNull(),
     reason: text('reason'),
-    createdAt: timestamptz('created_at').notNull().defaultNow(),
+    createdAt: createdNow('created_at'),
   },
   (t) => [index('closures_period_idx').on(t.startsAt, t.endsAt), check('closures_period', sql`${t.startsAt} < ${t.endsAt}`)],
 );
 
 /**
- * Every hold on a court's time. An exclusion constraint (see the migration) makes two active
- * reservations for the same court and time impossible, even when two requests arrive together.
+ * Every hold on a court's time. Triggers (see the migration) make two active reservations for the
+ * same court and time impossible. D1 runs one write at a time, so two requests can't both get in.
  */
-export const courtReservations = pgTable(
+export const courtReservations = sqliteTable(
   'court_reservations',
   {
-    id: uuid('id').primaryKey().defaultRandom(),
-    courtId: uuid('court_id')
+    id: id(),
+    courtId: text('court_id')
       .notNull()
       .references(() => courts.id, { onDelete: 'restrict' }),
     kind: reservationKind('kind').notNull(),
     status: reservationStatus('status').notNull().default('active'),
-    startsAt: timestamptz('starts_at').notNull(),
-    endsAt: timestamptz('ends_at').notNull(),
+    startsAt: timestamp('starts_at').notNull(),
+    endsAt: timestamp('ends_at').notNull(),
     note: text('note'),
     // Set on a block that exists because of a batch or a court membership.
-    batchId: uuid('batch_id').references((): AnyPgColumn => memberBatches.id, { onDelete: 'set null' }),
-    membershipId: uuid('membership_id').references((): AnyPgColumn => memberships.id, { onDelete: 'set null' }),
-    createdBy: uuid('created_by').references(() => staff.id, { onDelete: 'set null' }),
-    createdAt: timestamptz('created_at').notNull().defaultNow(),
+    batchId: text('batch_id').references((): AnySQLiteColumn => memberBatches.id, { onDelete: 'set null' }),
+    membershipId: text('membership_id').references((): AnySQLiteColumn => memberships.id, { onDelete: 'set null' }),
+    createdBy: text('created_by').references(() => staff.id, { onDelete: 'set null' }),
+    createdAt: createdNow('created_at'),
   },
-  (t) => [index('court_reservations_batch_idx').on(t.batchId), index('court_reservations_membership_idx').on(t.membershipId), index('court_reservations_period_idx').on(t.startsAt, t.endsAt), check('court_reservations_period', sql`${t.startsAt} < ${t.endsAt}`)],
+  (t) => [
+    index('court_reservations_batch_idx').on(t.batchId),
+    index('court_reservations_membership_idx').on(t.membershipId),
+    index('court_reservations_period_idx').on(t.startsAt, t.endsAt),
+    index('court_reservations_court_idx').on(t.courtId, t.status, t.startsAt),
+    check('court_reservations_period', sql`${t.startsAt} < ${t.endsAt}`),
+    check('court_reservations_kind_valid', inList(t.kind, reservationKind.enumValues)),
+    check('court_reservations_status_valid', inList(t.status, reservationStatus.enumValues)),
+  ],
 );
 
-/** Non-member customers. Walk-ins are numbered WLK-, website customers WEB-, in separate sequences. */
-export const customers = pgTable(
+/** Non-member customers. Walk-ins are numbered WLK-, website customers WEB-, each counted separately. */
+export const customers = sqliteTable(
   'customers',
   {
-    id: uuid('id').primaryKey().defaultRandom(),
+    id: id(),
     customerNo: text('customer_no').notNull().unique(),
     type: customerType('type').notNull(),
     name: text('name').notNull(),
     phone: text('phone'),
+    // So a search finds +91 98400-12345 by typing 9840012345.
+    phoneDigits: phoneDigitsOf('phone'),
     email: text('email'),
     notes: text('notes'),
-    deletedAt: timestamptz('deleted_at'),
-    createdAt: timestamptz('created_at').notNull().defaultNow(),
-    updatedAt: timestamptz('updated_at').notNull().defaultNow(),
+    deletedAt: timestamp('deleted_at'),
+    createdAt: createdNow('created_at'),
+    updatedAt: createdNow('updated_at'),
   },
-  (t) => [index('customers_type_idx').on(t.type), index('customers_phone_idx').on(t.phone)],
+  (t) => [
+    index('customers_type_idx').on(t.type),
+    index('customers_phone_idx').on(t.phone),
+    index('customers_phone_digits_idx').on(t.phoneDigits),
+    check('customers_type_valid', inList(t.type, customerType.enumValues)),
+  ],
 );
 
 /** A customer's paid court time. The time itself is held by its reservation, which guards against clashes. */
-export const bookings = pgTable(
+export const bookings = sqliteTable(
   'bookings',
   {
-    id: uuid('id').primaryKey().defaultRandom(),
+    id: id(),
     bookingNo: text('booking_no')
       .notNull()
       .unique()
-      .default(sql`dk_number('BKG-', nextval('booking_number_seq'), 5)`),
-    customerId: uuid('customer_id')
+      .$defaultFn(() => nextNumber('BKG-', 5)),
+    customerId: text('customer_id')
       .notNull()
       .references(() => customers.id, { onDelete: 'restrict' }),
-    reservationId: uuid('reservation_id')
+    reservationId: text('reservation_id')
       .notNull()
       .unique()
       .references(() => courtReservations.id, { onDelete: 'restrict' }),
@@ -256,47 +317,68 @@ export const bookings = pgTable(
     cancelReason: text('cancel_reason'),
     // Only the hash is stored, so a database leak can't open anyone's booking page.
     accessTokenHash: text('access_token_hash').unique(),
-    holdExpiresAt: timestamptz('hold_expires_at'),
-    cancelledAt: timestamptz('cancelled_at'),
-    createdBy: uuid('created_by').references(() => staff.id, { onDelete: 'set null' }),
-    createdAt: timestamptz('created_at').notNull().defaultNow(),
-    updatedAt: timestamptz('updated_at').notNull().defaultNow(),
+    holdExpiresAt: timestamp('hold_expires_at'),
+    cancelledAt: timestamp('cancelled_at'),
+    ...gatewayOrderColumns(),
+    createdBy: text('created_by').references(() => staff.id, { onDelete: 'set null' }),
+    createdAt: createdNow('created_at'),
+    updatedAt: createdNow('updated_at'),
   },
-  (t) => [index('bookings_customer_idx').on(t.customerId), check('bookings_amount', sql`${t.amountPaise} >= 0`)],
+  (t) => [
+    index('bookings_customer_idx').on(t.customerId),
+    index('bookings_gateway_order_idx').on(t.gatewayOrderId),
+    check('bookings_amount', sql`${t.amountPaise} >= 0`),
+    check('bookings_source_valid', inList(t.source, bookingSource.enumValues)),
+    check('bookings_status_valid', inList(t.status, bookingStatus.enumValues)),
+  ],
 );
 
 /** Money staff received. A receipt is never edited: a mistake is voided, with a reason, and recorded again. */
-export const payments = pgTable(
+export const payments = sqliteTable(
   'payments',
   {
-    id: uuid('id').primaryKey().defaultRandom(),
+    id: id(),
     receiptNo: text('receipt_no')
       .notNull()
       .unique()
-      .default(sql`dk_number('RCP-', nextval('receipt_number_seq'), 5)`),
+      .$defaultFn(() => nextNumber('RCP-', 5)),
     // A receipt pays for either a booking or one month of a membership, never both.
-    bookingId: uuid('booking_id').references(() => bookings.id, { onDelete: 'restrict' }),
-    periodId: uuid('period_id').references(() => membershipPeriods.id, { onDelete: 'restrict' }),
+    bookingId: text('booking_id').references(() => bookings.id, { onDelete: 'restrict' }),
+    periodId: text('period_id').references((): AnySQLiteColumn => membershipPeriods.id, { onDelete: 'restrict' }),
     amountPaise: integer('amount_paise').notNull(),
     method: paymentMethod('method').notNull(),
     reference: text('reference'),
-    receivedAt: timestamptz('received_at').notNull().defaultNow(),
-    recordedBy: uuid('recorded_by').references(() => staff.id, { onDelete: 'set null' }),
-    voidedAt: timestamptz('voided_at'),
+    receivedAt: createdNow('received_at'),
+    recordedBy: text('recorded_by').references(() => staff.id, { onDelete: 'set null' }),
+    voidedAt: timestamp('voided_at'),
     voidReason: text('void_reason'),
-    voidedBy: uuid('voided_by').references(() => staff.id, { onDelete: 'set null' }),
+    voidedBy: text('voided_by').references(() => staff.id, { onDelete: 'set null' }),
+    // Online payments only. The gateway's payment id is unique, so the same payment can't be recorded twice.
+    gateway: paymentGateway('gateway'),
+    gatewayOrderId: text('gateway_order_id'),
+    gatewayPaymentId: text('gateway_payment_id').unique(),
+    // A refunded receipt is also voided, so every total that leaves out voided receipts leaves it out too.
+    refundedAt: timestamp('refunded_at'),
+    gatewayRefundId: text('gateway_refund_id'),
   },
-  (t) => [index('payments_booking_idx').on(t.bookingId), index('payments_received_idx').on(t.receivedAt), index('payments_period_idx').on(t.periodId), check('payments_amount', sql`${t.amountPaise} > 0`), check('payments_one_target', sql`num_nonnulls(${t.bookingId}, ${t.periodId}) = 1`)],
+  (t) => [
+    index('payments_booking_idx').on(t.bookingId),
+    index('payments_received_idx').on(t.receivedAt),
+    index('payments_period_idx').on(t.periodId),
+    check('payments_amount', sql`${t.amountPaise} > 0`),
+    check('payments_one_target', sql`(${t.bookingId} IS NOT NULL) + (${t.periodId} IS NOT NULL) = 1`),
+    check('payments_method_valid', inList(t.method, paymentMethod.enumValues)),
+  ],
 );
 
-export const enquiries = pgTable(
+export const enquiries = sqliteTable(
   'enquiries',
   {
-    id: uuid('id').primaryKey().defaultRandom(),
+    id: id(),
     enquiryNo: text('enquiry_no')
       .notNull()
       .unique()
-      .default(sql`dk_number('ENQ-', nextval('enquiry_number_seq'), 5)`),
+      .$defaultFn(() => nextNumber('ENQ-', 5)),
     name: text('name').notNull(),
     email: text('email').notNull(),
     phone: text('phone'),
@@ -305,28 +387,28 @@ export const enquiries = pgTable(
     message: text('message').notNull(),
     status: enquiryStatus('status').notNull().default('new'),
     notes: text('notes'),
-    createdAt: timestamptz('created_at').notNull().defaultNow(),
-    updatedAt: timestamptz('updated_at').notNull().defaultNow(),
+    createdAt: createdNow('created_at'),
+    updatedAt: createdNow('updated_at'),
   },
-  (t) => [index('enquiries_status_idx').on(t.status, t.createdAt)],
+  (t) => [index('enquiries_status_idx').on(t.status, t.createdAt), check('enquiries_status_valid', inList(t.status, enquiryStatus.enumValues))],
 );
 
 /**
  * Who messages come from, all set in the admin panel. One row only (id 1), kept apart from
  * `settings` because every role can read that. The app password is stored encrypted.
  */
-export const messageSettings = pgTable(
+export const messageSettings = sqliteTable(
   'message_settings',
   {
     id: integer('id').primaryKey().default(1),
-    emailEnabled: boolean('email_enabled').notNull().default(true),
+    emailEnabled: flag('email_enabled').notNull().default(true),
     senderName: text('sender_name'),
     senderEmail: text('sender_email'),
     appPasswordEncrypted: text('app_password_encrypted'),
     notifyEmail: text('notify_email'),
     dailyEmailLimit: integer('daily_email_limit').notNull().default(100),
     whatsappNumber: text('whatsapp_number'),
-    updatedAt: timestamptz('updated_at').notNull().defaultNow(),
+    updatedAt: createdNow('updated_at'),
   },
   (t) => [check('message_settings_single_row', sql`${t.id} = 1`)],
 );
@@ -335,10 +417,10 @@ export const messageSettings = pgTable(
  * Every message, sent or waiting. A body may hold {{link}}, filled in only when sending,
  * so a customer's private link is never stored here.
  */
-export const messages = pgTable(
+export const messages = sqliteTable(
   'messages',
   {
-    id: uuid('id').primaryKey().defaultRandom(),
+    id: id(),
     channel: messageChannel('channel').notNull().default('email'),
     template: text('template').notNull(),
     recipient: text('recipient').notNull(),
@@ -346,210 +428,234 @@ export const messages = pgTable(
     body: text('body').notNull(),
     status: messageStatus('status').notNull().default('queued'),
     attempts: integer('attempts').notNull().default(0),
-    nextAttemptAt: timestamptz('next_attempt_at').notNull().defaultNow(),
-    expiresAt: timestamptz('expires_at'),
+    nextAttemptAt: createdNow('next_attempt_at'),
+    expiresAt: timestamp('expires_at'),
     lastError: text('last_error'),
-    bookingId: uuid('booking_id').references(() => bookings.id, { onDelete: 'set null' }),
-    enquiryId: uuid('enquiry_id').references(() => enquiries.id, { onDelete: 'set null' }),
-    membershipId: uuid('membership_id').references(() => memberships.id, { onDelete: 'set null' }),
-    sentAt: timestamptz('sent_at'),
-    createdBy: uuid('created_by').references(() => staff.id, { onDelete: 'set null' }),
-    createdAt: timestamptz('created_at').notNull().defaultNow(),
+    bookingId: text('booking_id').references(() => bookings.id, { onDelete: 'set null' }),
+    enquiryId: text('enquiry_id').references(() => enquiries.id, { onDelete: 'set null' }),
+    membershipId: text('membership_id').references((): AnySQLiteColumn => memberships.id, { onDelete: 'set null' }),
+    sentAt: timestamp('sent_at'),
+    createdBy: text('created_by').references(() => staff.id, { onDelete: 'set null' }),
+    createdAt: createdNow('created_at'),
   },
-  (t) => [index('messages_queue_idx').on(t.status, t.nextAttemptAt), index('messages_booking_idx').on(t.bookingId), index('messages_created_idx').on(t.createdAt)],
+  (t) => [
+    index('messages_queue_idx').on(t.status, t.nextAttemptAt),
+    index('messages_booking_idx').on(t.bookingId),
+    index('messages_created_idx').on(t.createdAt),
+    check('messages_channel_valid', inList(t.channel, messageChannel.enumValues)),
+    check('messages_status_valid', inList(t.status, messageStatus.enumValues)),
+  ],
 );
 
 /** What the Owner sells. `features` are whatever extras the Owner wants to list. */
-export const membershipPlans = pgTable(
+export const membershipPlans = sqliteTable(
   'membership_plans',
   {
-    id: uuid('id').primaryKey().defaultRandom(),
+    id: id(),
     name: text('name').notNull(),
     kind: membershipKind('kind').notNull(),
     description: text('description'),
-    features: text('features').array().notNull().default(sql`'{}'::text[]`),
+    features: json<string[]>('features')
+      .notNull()
+      .$defaultFn(() => []),
     // Per person for an individual plan, per court for a court plan.
     pricePaise: integer('price_paise').notNull(),
     playersPerCourt: integer('players_per_court').notNull().default(10),
-    active: boolean('active').notNull().default(true),
+    active: flag('active').notNull().default(true),
     sortOrder: integer('sort_order').notNull().default(0),
-    createdAt: timestamptz('created_at').notNull().defaultNow(),
-    updatedAt: timestamptz('updated_at').notNull().defaultNow(),
+    createdAt: createdNow('created_at'),
+    updatedAt: createdNow('updated_at'),
   },
-  (t) => [uniqueIndex('membership_plans_name_unique').on(sql`lower(${t.name})`), check('membership_plans_price', sql`${t.pricePaise} >= 0`), check('membership_plans_players', sql`${t.playersPerCourt} BETWEEN 1 AND 10`)],
+  (t) => [
+    uniqueIndex('membership_plans_name_unique').on(sql`lower(${t.name})`),
+    check('membership_plans_price', sql`${t.pricePaise} >= 0`),
+    check('membership_plans_players', sql`${t.playersPerCourt} BETWEEN 1 AND 10`),
+    check('membership_plans_kind_valid', inList(t.kind, membershipKind.enumValues)),
+  ],
 );
 
 /** A fixed weekly time that individual members share. It holds the court from its first date to its last. */
-export const memberBatches = pgTable(
+export const memberBatches = sqliteTable(
   'member_batches',
   {
-    id: uuid('id').primaryKey().defaultRandom(),
+    id: id(),
     name: text('name').notNull(),
-    planId: uuid('plan_id')
+    planId: text('plan_id')
       .notNull()
       .references(() => membershipPlans.id, { onDelete: 'restrict' }),
-    courtId: uuid('court_id')
+    courtId: text('court_id')
       .notNull()
       .references(() => courts.id, { onDelete: 'restrict' }),
-    days: integer('days').array().notNull(),
+    days: json<number[]>('days').notNull(),
     startMinute: integer('start_minute').notNull(),
     endMinute: integer('end_minute').notNull(),
     capacity: integer('capacity').notNull(),
-    startsOn: date('starts_on', { mode: 'string' }).notNull(),
-    endsOn: date('ends_on', { mode: 'string' }).notNull(),
-    active: boolean('active').notNull().default(true),
-    createdAt: timestamptz('created_at').notNull().defaultNow(),
-    updatedAt: timestamptz('updated_at').notNull().defaultNow(),
+    startsOn: day('starts_on').notNull(),
+    endsOn: day('ends_on').notNull(),
+    active: flag('active').notNull().default(true),
+    createdAt: createdNow('created_at'),
+    updatedAt: createdNow('updated_at'),
   },
   (t) => [check('member_batches_capacity', sql`${t.capacity} >= 1`), check('member_batches_dates', sql`${t.startsOn} <= ${t.endsOn}`)],
 );
 
 /** One person in a batch (MEM-), or a group holding whole courts at a fixed time (CRT-). */
-export const memberships = pgTable(
+export const memberships = sqliteTable(
   'memberships',
   {
-    id: uuid('id').primaryKey().defaultRandom(),
+    id: id(),
     membershipNo: text('membership_no').notNull().unique(),
     kind: membershipKind('kind').notNull(),
-    planId: uuid('plan_id')
+    planId: text('plan_id')
       .notNull()
       .references(() => membershipPlans.id, { onDelete: 'restrict' }),
-    batchId: uuid('batch_id').references(() => memberBatches.id, { onDelete: 'restrict' }),
+    batchId: text('batch_id').references(() => memberBatches.id, { onDelete: 'restrict' }),
     // A court membership's own fixed time. An individual member's comes from their batch.
-    days: integer('days').array(),
+    days: json<number[]>('days'),
     startMinute: integer('start_minute'),
     endMinute: integer('end_minute'),
     holderName: text('holder_name').notNull(),
     phone: text('phone').notNull(),
+    phoneDigits: phoneDigitsOf('phone'),
     email: text('email'),
     notes: text('notes'),
-    startsOn: date('starts_on', { mode: 'string' }).notNull(),
-    endsOn: date('ends_on', { mode: 'string' }).notNull(),
+    startsOn: day('starts_on').notNull(),
+    endsOn: day('ends_on').notNull(),
     pricePaise: integer('price_paise').notNull(),
     status: membershipStatus('status').notNull().default('active'),
     source: bookingSource('source').notNull().default('admin'),
     cancelReason: text('cancel_reason'),
-    cancelledAt: timestamptz('cancelled_at'),
+    cancelledAt: timestamp('cancelled_at'),
     accessTokenHash: text('access_token_hash').unique(),
-    holdExpiresAt: timestamptz('hold_expires_at'),
-    deletedAt: timestamptz('deleted_at'),
-    createdBy: uuid('created_by').references(() => staff.id, { onDelete: 'set null' }),
-    createdAt: timestamptz('created_at').notNull().defaultNow(),
-    updatedAt: timestamptz('updated_at').notNull().defaultNow(),
+    holdExpiresAt: timestamp('hold_expires_at'),
+    ...gatewayOrderColumns(),
+    deletedAt: timestamp('deleted_at'),
+    createdBy: text('created_by').references(() => staff.id, { onDelete: 'set null' }),
+    createdAt: createdNow('created_at'),
+    updatedAt: createdNow('updated_at'),
   },
-  (t) => [index('memberships_batch_idx').on(t.batchId), index('memberships_ends_idx').on(t.endsOn), check('memberships_price', sql`${t.pricePaise} >= 0`)],
+  (t) => [
+    index('memberships_batch_idx').on(t.batchId),
+    index('memberships_ends_idx').on(t.endsOn),
+    index('memberships_phone_digits_idx').on(t.phoneDigits),
+    index('memberships_gateway_order_idx').on(t.gatewayOrderId),
+    check('memberships_price', sql`${t.pricePaise} >= 0`),
+    check('memberships_kind_valid', inList(t.kind, membershipKind.enumValues)),
+    check('memberships_status_valid', inList(t.status, membershipStatus.enumValues)),
+    check('memberships_source_valid', inList(t.source, bookingSource.enumValues)),
+  ],
 );
 
-export const membershipCourts = pgTable(
+export const membershipCourts = sqliteTable(
   'membership_courts',
   {
-    membershipId: uuid('membership_id')
+    membershipId: text('membership_id')
       .notNull()
       .references(() => memberships.id, { onDelete: 'cascade' }),
-    courtId: uuid('court_id')
+    courtId: text('court_id')
       .notNull()
       .references(() => courts.id, { onDelete: 'restrict' }),
   },
   (t) => [primaryKey({ columns: [t.membershipId, t.courtId] })],
 );
 
-export const membershipPlayers = pgTable(
+export const membershipPlayers = sqliteTable(
   'membership_players',
   {
-    id: uuid('id').primaryKey().defaultRandom(),
-    membershipId: uuid('membership_id')
+    id: id(),
+    membershipId: text('membership_id')
       .notNull()
       .references(() => memberships.id, { onDelete: 'cascade' }),
     name: text('name').notNull(),
     phone: text('phone'),
-    createdAt: timestamptz('created_at').notNull().defaultNow(),
+    createdAt: createdNow('created_at'),
   },
   (t) => [index('membership_players_membership_idx').on(t.membershipId)],
 );
 
 /** One paid month. The amount is copied here, so changing a plan's price never rewrites history. */
-export const membershipPeriods = pgTable(
+export const membershipPeriods = sqliteTable(
   'membership_periods',
   {
-    id: uuid('id').primaryKey().defaultRandom(),
-    membershipId: uuid('membership_id')
+    id: id(),
+    membershipId: text('membership_id')
       .notNull()
       .references(() => memberships.id, { onDelete: 'cascade' }),
-    startsOn: date('starts_on', { mode: 'string' }).notNull(),
-    endsOn: date('ends_on', { mode: 'string' }).notNull(),
+    startsOn: day('starts_on').notNull(),
+    endsOn: day('ends_on').notNull(),
     // What's owed, after any referral discount or credit, which are kept so the sum can be explained.
     amountPaise: integer('amount_paise').notNull(),
     discountPaise: integer('discount_paise').notNull().default(0),
     creditPaise: integer('credit_paise').notNull().default(0),
-    createdAt: timestamptz('created_at').notNull().defaultNow(),
+    createdAt: createdNow('created_at'),
   },
   (t) => [index('membership_periods_membership_idx').on(t.membershipId), check('membership_periods_amount', sql`${t.amountPaise} >= 0`)],
 );
 
 /** One row only (id 1). Off until the Owner switches it on, so nobody gets a discount by accident. */
-export const referralProgram = pgTable(
+export const referralProgram = sqliteTable(
   'referral_program',
   {
     id: integer('id').primaryKey().default(1),
-    enabled: boolean('enabled').notNull().default(false),
+    enabled: flag('enabled').notNull().default(false),
     discountType: discountType('discount_type').notNull().default('percent'),
     // A percentage (1 to 100) or paise, depending on the type.
     discountValue: integer('discount_value').notNull().default(10),
     rewardPaise: integer('reward_paise').notNull().default(0),
-    updatedAt: timestamptz('updated_at').notNull().defaultNow(),
+    updatedAt: createdNow('updated_at'),
   },
-  (t) => [check('referral_program_single_row', sql`${t.id} = 1`)],
+  (t) => [check('referral_program_single_row', sql`${t.id} = 1`), check('referral_program_type_valid', inList(t.discountType, discountType.enumValues))],
 );
 
 /** A member's own code, or (with no membership) a code the Owner hands out, such as for a promotion. */
-export const referralCodes = pgTable(
+export const referralCodes = sqliteTable(
   'referral_codes',
   {
-    id: uuid('id').primaryKey().defaultRandom(),
+    id: id(),
     code: text('code').notNull().unique(),
-    membershipId: uuid('membership_id').references(() => memberships.id, { onDelete: 'cascade' }),
+    membershipId: text('membership_id').references(() => memberships.id, { onDelete: 'cascade' }),
     label: text('label'),
-    active: boolean('active').notNull().default(true),
+    active: flag('active').notNull().default(true),
     maxUses: integer('max_uses'),
-    expiresOn: date('expires_on', { mode: 'string' }),
-    createdAt: timestamptz('created_at').notNull().defaultNow(),
-    updatedAt: timestamptz('updated_at').notNull().defaultNow(),
+    expiresOn: day('expires_on'),
+    createdAt: createdNow('created_at'),
+    updatedAt: createdNow('updated_at'),
   },
   (t) => [uniqueIndex('referral_codes_member_unique').on(t.membershipId).where(sql`${t.membershipId} IS NOT NULL`)],
 );
 
-export const referralRedemptions = pgTable(
+export const referralRedemptions = sqliteTable(
   'referral_redemptions',
   {
-    id: uuid('id').primaryKey().defaultRandom(),
-    codeId: uuid('code_id')
+    id: id(),
+    codeId: text('code_id')
       .notNull()
       .references(() => referralCodes.id, { onDelete: 'restrict' }),
-    membershipId: uuid('membership_id')
+    membershipId: text('membership_id')
       .notNull()
       .unique()
       .references(() => memberships.id, { onDelete: 'cascade' }),
     discountPaise: integer('discount_paise').notNull(),
     rewardPaise: integer('reward_paise').notNull().default(0),
     // Set when the new member has paid in full and the referrer got their credit.
-    creditedAt: timestamptz('credited_at'),
-    createdAt: timestamptz('created_at').notNull().defaultNow(),
+    creditedAt: timestamp('credited_at'),
+    createdAt: createdNow('created_at'),
   },
   (t) => [index('referral_redemptions_code_idx').on(t.codeId)],
 );
 
 /** Money a member can put towards a renewal. Earned is positive, spent is negative; the balance is the sum. */
-export const memberCredits = pgTable(
+export const memberCredits = sqliteTable(
   'member_credits',
   {
-    id: uuid('id').primaryKey().defaultRandom(),
-    membershipId: uuid('membership_id')
+    id: id(),
+    membershipId: text('membership_id')
       .notNull()
       .references(() => memberships.id, { onDelete: 'cascade' }),
     amountPaise: integer('amount_paise').notNull(),
     reason: text('reason').notNull(),
-    createdBy: uuid('created_by').references(() => staff.id, { onDelete: 'set null' }),
-    createdAt: timestamptz('created_at').notNull().defaultNow(),
+    createdBy: text('created_by').references(() => staff.id, { onDelete: 'set null' }),
+    createdAt: createdNow('created_at'),
   },
   (t) => [index('member_credits_membership_idx').on(t.membershipId)],
 );
@@ -557,26 +663,62 @@ export const memberCredits = pgTable(
 export type Staff = typeof staff.$inferSelect;
 export type StaffRole = (typeof staffRole.enumValues)[number];
 
-const bytes = customType<{ data: Buffer; driverData: Buffer }>({ dataType: () => 'bytea' });
-
 /** One row only (id 1): everything the website says, as edited in the admin panel. */
-export const siteContent = pgTable(
+export const siteContent = sqliteTable(
   'site_content',
   {
     id: integer('id').primaryKey().default(1),
-    content: jsonb('content').notNull().default(sql`'{}'::jsonb`),
+    content: json<unknown>('content').notNull().default(sql`'{}'`),
     version: integer('version').notNull().default(1),
-    updatedByStaffId: uuid('updated_by_staff_id').references(() => staff.id, { onDelete: 'set null' }),
-    updatedAt: timestamptz('updated_at').notNull().defaultNow(),
+    updatedByStaffId: text('updated_by_staff_id').references(() => staff.id, { onDelete: 'set null' }),
+    updatedAt: createdNow('updated_at'),
   },
   (t) => [check('site_content_single_row', sql`${t.id} = 1`)],
 );
 
-/** Photos uploaded for the website. They live in the database so they survive a change of host. */
-export const siteImages = pgTable('site_images', {
-  id: uuid('id').primaryKey().defaultRandom(),
-  data: bytes('data').notNull(),
+/** Photos uploaded for the website. The file itself is in R2 under photos/<id>; this row lists it. */
+export const siteImages = sqliteTable('site_images', {
+  id: id(),
   contentType: text('content_type').notNull(),
   byteSize: integer('byte_size').notNull(),
-  createdAt: timestamptz('created_at').notNull().defaultNow(),
+  createdAt: createdNow('created_at'),
 });
+
+/**
+ * One row only (id 1): the payment gateway the Owner set up in Settings. The secrets are encrypted
+ * with APP_SECRET, like the Gmail app password, and never sent back to the browser.
+ */
+export const paymentSettings = sqliteTable(
+  'payment_settings',
+  {
+    id: integer('id').primaryKey().default(1),
+    enabled: flag('enabled').notNull().default(false),
+    gateway: paymentGateway('gateway'),
+    mode: gatewayMode('mode').notNull().default('test'),
+    // Cashfree App ID or Razorpay Key ID. Not secret: Razorpay's is shown to the browser for checkout.
+    keyId: text('key_id'),
+    keySecretEncrypted: text('key_secret_encrypted'),
+    // Razorpay only: the secret typed in when the webhook was created. Cashfree signs with the key secret.
+    webhookSecretEncrypted: text('webhook_secret_encrypted'),
+    updatedByStaffId: text('updated_by_staff_id').references(() => staff.id, { onDelete: 'set null' }),
+    updatedAt: createdNow('updated_at'),
+  },
+  (t) => [check('payment_settings_single_row', sql`${t.id} = 1`)],
+);
+
+/** Online payments staff need to look at, such as money that arrived after the slot was taken and was refunded. */
+export const paymentIssues = sqliteTable(
+  'payment_issues',
+  {
+    id: id(),
+    bookingId: text('booking_id').references(() => bookings.id, { onDelete: 'set null' }),
+    membershipId: text('membership_id').references(() => memberships.id, { onDelete: 'set null' }),
+    paymentId: text('payment_id').references(() => payments.id, { onDelete: 'set null' }),
+    amountPaise: integer('amount_paise'),
+    message: text('message').notNull(),
+    resolvedAt: timestamp('resolved_at'),
+    resolvedBy: text('resolved_by').references(() => staff.id, { onDelete: 'set null' }),
+    createdAt: createdNow('created_at'),
+  },
+  (t) => [index('payment_issues_open_idx').on(t.resolvedAt, t.createdAt)],
+);

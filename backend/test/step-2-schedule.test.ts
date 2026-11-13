@@ -1,7 +1,7 @@
 import { eq, sql } from 'drizzle-orm';
 import request from 'supertest';
 import { beforeEach, describe, expect, it } from 'vitest';
-import { db, pool } from '../src/db/client.js';
+import { DB_ERRORS, db, dbErrorCode } from '../src/db/client.js';
 import { auditLog, courtReservations, courts } from '../src/db/schema.js';
 import { addDays, instantAt, venueToday } from '../src/lib/time.js';
 import { slotPrice } from '../src/schedule/availability.js';
@@ -292,10 +292,11 @@ describe('overlap protection', () => {
 
   it('holds even for a direct database write', async () => {
     await hold(court1, 360, 420);
-    await expect(
-      pool.query(`INSERT INTO court_reservations (court_id, kind, starts_at, ends_at) VALUES ($1, 'staff_block', $2, $3)`, [court1, instantAt(FUTURE, 360), instantAt(FUTURE, 420)]),
-    ).rejects.toMatchObject({ code: '23P01' });
-    const [{ count }] = (await db.execute(sql`SELECT count(*)::int AS count FROM court_reservations`)).rows as [{ count: number }];
+    const refused = await db
+      .run(sql`INSERT INTO court_reservations (id, court_id, kind, starts_at, ends_at) VALUES (${crypto.randomUUID()}, ${court1}, 'staff_block', ${instantAt(FUTURE, 360).getTime()}, ${instantAt(FUTURE, 420).getTime()})`)
+      .then(() => 'saved', dbErrorCode);
+    expect(refused).toBe(DB_ERRORS.exclusionViolation);
+    const count = await db.$count(courtReservations);
     expect(count).toBe(1);
   });
 });

@@ -8,6 +8,7 @@ import Notice from '../components/Notice';
 import Panel from '../components/Panel';
 import PasswordField from '../components/PasswordField';
 import StatusBadge from '../components/StatusBadge';
+import { useCan } from '../auth/AuthContext';
 import { useWorkspace } from '../store/WorkspaceContext';
 import { api } from '../lib/api';
 import { useResource } from '../lib/useResource';
@@ -203,6 +204,135 @@ function MessagingForm({ saved, onSaved }) {
           <Button icon={false} onClick={sendTest} disabled={test.pending} aria-busy={test.pending}>
             {test.pending ? 'Sending…' : 'Send test email'}
           </Button>
+        </div>
+      </form>
+    </Panel>
+  );
+}
+
+const GATEWAY_OPTIONS = [
+  { value: '', label: 'Not set up' },
+  { value: 'cashfree', label: 'Cashfree' },
+  { value: 'razorpay', label: 'Razorpay' },
+];
+const MODE_OPTIONS = [
+  { value: 'test', label: 'Test (sandbox, no real money)' },
+  { value: 'live', label: 'Live (real payments)' },
+];
+// What each gateway calls its keys, and which webhook events to tick in its dashboard.
+const GATEWAY_HELP = {
+  cashfree: { keyId: 'App ID', keySecret: 'Secret key', events: 'Payment success and Payment failed' },
+  razorpay: { keyId: 'Key ID', keySecret: 'Key Secret', events: 'payment.captured and payment.failed' },
+};
+
+function PaymentsPanel({ onSaved }) {
+  const { data, error: loadError, reload } = useResource('/settings/payments');
+  if (loadError) return <Panel title="Online payments"><FormAlert error={loadError} /></Panel>;
+  if (!data) return <Panel title="Online payments"><p className="muted small">Loading…</p></Panel>;
+  return <PaymentsForm key={JSON.stringify(data.settings)} saved={data.settings} onSaved={(message) => { reload(); onSaved(message); }} />;
+}
+
+function PaymentsForm({ saved, onSaved }) {
+  const [form, setForm] = useState({ enabled: saved.enabled, gateway: saved.gateway ?? '', mode: saved.mode, keyId: saved.keyId ?? '' });
+  const [keySecret, setKeySecret] = useState('');
+  const [webhookSecret, setWebhookSecret] = useState('');
+  const [currentPassword, setCurrentPassword] = useState('');
+  const [checked, setChecked] = useState(false);
+  const { pending, error, save } = useSave();
+  const check = useSave();
+  const set = (field) => (e) => setForm((f) => ({ ...f, [field]: e.target.value }));
+  const help = GATEWAY_HELP[form.gateway];
+  // A different gateway's keys aren't kept, so new ones must be typed in.
+  const keepsSecrets = form.gateway === (saved.gateway ?? '');
+
+  const submit = async (e) => {
+    e.preventDefault();
+    setChecked(false);
+    const body = { ...form, gateway: form.gateway || null, keyId: form.keyId || null, keySecret, webhookSecret, currentPassword };
+    const ok = await save(() => api('/settings/payments', { method: 'PUT', body }));
+    setCurrentPassword('');
+    if (ok) onSaved(form.enabled ? `Online payments are on (${form.mode === 'live' ? 'live' : 'test'}).` : 'Payment settings saved.');
+  };
+
+  const checkKeys = () => {
+    setChecked(false);
+    check.save(async () => {
+      await api('/settings/payments/check', { method: 'POST' });
+      setChecked(true);
+    });
+  };
+
+  const badge = saved.enabled ? (saved.mode === 'live' ? ['success', 'On · Live'] : ['warning', 'On · Test']) : ['tint', 'Off'];
+
+  return (
+    <Panel title="Online payments" meta={<StatusBadge tone={badge[0]}>{badge[1]}</StatusBadge>}>
+      <form className="settings-form" onSubmit={submit} noValidate>
+        <FormAlert error={error} />
+        {!saved.enabled && saved.simulator && <Notice>While this is off, the website shows test “Pay” buttons (local development only). On the live site it says online payment isn’t available.</Notice>}
+        <ol className="fine muted settings-steps">
+          <li>Get your keys from the gateway’s dashboard (Developers / API keys). Use the test keys first.</li>
+          <li>Choose the gateway and Test or Live, paste the keys and your password, then save.</li>
+          {form.gateway === 'razorpay' ? (
+            <li>
+              In Razorpay, add a webhook to the address below with the events {help.events}, and make up a secret for it. Enter the same secret here.
+            </li>
+          ) : (
+            <li>Cashfree is told the address below with every payment. You can also add it in Cashfree’s webhook settings.</li>
+          )}
+          <li>Press Check connection, then tick Take payments online and save.</li>
+        </ol>
+        <div className="form-grid">
+          <Field as="select" label="Gateway" options={GATEWAY_OPTIONS} value={form.gateway} onChange={set('gateway')} />
+          <Field as="select" label="Mode" options={MODE_OPTIONS} value={form.mode} onChange={set('mode')} />
+          {help && (
+            <>
+              <Field label={help.keyId} autoComplete="off" spellCheck={false} value={form.keyId} onChange={set('keyId')} />
+              <PasswordField
+                label={help.keySecret}
+                autoComplete="new-password"
+                hint={keepsSecrets && saved.hasKeySecret ? 'One is saved. Leave blank to keep it.' : 'Never shown again after saving.'}
+                value={keySecret}
+                onChange={(e) => setKeySecret(e.target.value)}
+              />
+              {form.gateway === 'razorpay' && (
+                <PasswordField
+                  label="Webhook secret"
+                  autoComplete="new-password"
+                  hint={keepsSecrets && saved.hasWebhookSecret ? 'One is saved. Leave blank to keep it.' : 'The secret you typed when creating the webhook in Razorpay.'}
+                  value={webhookSecret}
+                  onChange={(e) => setWebhookSecret(e.target.value)}
+                />
+              )}
+              <div className="form-grid__full">
+                <Field label="Webhook address (copy into the gateway)" readOnly value={saved.webhookUrl} onFocus={(e) => e.target.select()} />
+              </div>
+            </>
+          )}
+          <div className="form-grid__full">
+            <label className="day-check">
+              <input type="checkbox" checked={form.enabled} onChange={(e) => setForm((f) => ({ ...f, enabled: e.target.checked }))} />
+              <span>Take payments online{form.mode === 'live' ? ' (real money)' : ''}</span>
+            </label>
+          </div>
+          <div className="form-grid__full">
+            <PasswordField label="Your password" autoComplete="current-password" required hint="Payment settings always need your own password." value={currentPassword} onChange={(e) => setCurrentPassword(e.target.value)} />
+          </div>
+        </div>
+        <FormAlert error={check.error} />
+        {checked && (
+          <div role="status">
+            <Notice>The saved keys work.</Notice>
+          </div>
+        )}
+        <div className="settings-form__actions">
+          <Button type="submit" variant="primary" icon={false} disabled={pending} aria-busy={pending}>
+            {pending ? 'Saving…' : 'Save payment settings'}
+          </Button>
+          {saved.gateway && saved.hasKeySecret && (
+            <Button icon={false} onClick={checkKeys} disabled={check.pending} aria-busy={check.pending}>
+              {check.pending ? 'Checking…' : 'Check connection'}
+            </Button>
+          )}
         </div>
       </form>
     </Panel>
@@ -621,6 +751,7 @@ function AvailabilityPanel({ version }) {
 
 export default function Settings() {
   const { notify } = useWorkspace();
+  const can = useCan();
   const [data, setData] = useState(null);
   const [version, setVersion] = useState(0);
   const [loadError, setLoadError] = useState('');
@@ -653,7 +784,7 @@ export default function Settings() {
 
   return (
     <>
-      <PageHeader title="Settings" subtitle="Venue details, messages, courts, hours, prices and closures." />
+      <PageHeader title="Settings" subtitle="Venue details, messages, online payments, courts, hours, prices and closures." />
 
       {loadError && (
         <div role="alert">
@@ -671,6 +802,7 @@ export default function Settings() {
         <div className="settings-stack">
           <VenuePanel venue={data.settings} onSaved={saved} />
           <MessagingPanel onSaved={saved} />
+          {can('settings.manage') && <PaymentsPanel onSaved={saved} />}
           <CourtsPanel courts={data.courts} onChanged={saved} onEdit={setEditingCourt} onDelete={setDeletingCourt} onError={setPageError} />
           <HoursPanel hours={data.hours} onSaved={saved} />
           {/* Remounts when courts change, so a row can't keep pointing at a deleted court. */}

@@ -3,7 +3,7 @@ import { and, desc, eq, isNull, sql } from 'drizzle-orm';
 import { can } from '../auth/permissions.js';
 import { db } from '../db/client.js';
 import { bookings, customers, enquiries, memberships, payments } from '../db/schema.js';
-import { customerMatches, likeTerm } from '../lib/search.js';
+import { customerMatches, likeTerm, ilike } from '../lib/search.js';
 import { currentAuth, requirePasswordCurrent, requireSession } from '../middleware/auth.js';
 import { bookingSearch, bookingViews } from './bookings.js';
 
@@ -28,13 +28,13 @@ export function searchRouter(): Router {
             .select({ id: payments.id, receiptNo: payments.receiptNo, amountPaise: payments.amountPaise, bookingNo: bookings.bookingNo })
             .from(payments)
             .leftJoin(bookings, eq(payments.bookingId, bookings.id))
-            .where(sql`${payments.receiptNo} ILIKE ${likeTerm(q)}`)
+            .where(sql`${ilike(payments.receiptNo, likeTerm(q))}`)
             .limit(LIMIT)
         : [],
       db
         .select({ id: enquiries.id, enquiryNo: enquiries.enquiryNo, name: enquiries.name, topic: enquiries.topic })
         .from(enquiries)
-        .where(sql`(${enquiries.enquiryNo} ILIKE ${likeTerm(q)} OR ${enquiries.name} ILIKE ${likeTerm(q)} OR ${enquiries.email} ILIKE ${likeTerm(q)} OR ${enquiries.phone} ILIKE ${likeTerm(q)} OR ${enquiries.message} ILIKE ${likeTerm(q)})`)
+        .where(sql`(${ilike(enquiries.enquiryNo, likeTerm(q))} OR ${ilike(enquiries.name, likeTerm(q))} OR ${ilike(enquiries.email, likeTerm(q))} OR ${ilike(enquiries.phone, likeTerm(q))} OR ${ilike(enquiries.message, likeTerm(q))})`)
         .orderBy(desc(enquiries.createdAt))
         .limit(LIMIT),
       db
@@ -43,7 +43,7 @@ export function searchRouter(): Router {
         .where(
           and(
             isNull(memberships.deletedAt),
-            sql`(${memberships.membershipNo} ILIKE ${likeTerm(q)} OR ${memberships.holderName} ILIKE ${likeTerm(q)} OR ${memberships.email} ILIKE ${likeTerm(q)} OR ${memberships.notes} ILIKE ${likeTerm(q)} OR regexp_replace(${memberships.phone}, '[^0-9]', '', 'g') LIKE ${likeTerm(q.replace(/\D/g, '') || q)})`,
+            sql`(${ilike(memberships.membershipNo, likeTerm(q))} OR ${ilike(memberships.holderName, likeTerm(q))} OR ${ilike(memberships.email, likeTerm(q))} OR ${ilike(memberships.notes, likeTerm(q))} OR ${ilike(memberships.phoneDigits, likeTerm(q.replace(/\D/g, '') || q))})`,
           ),
         )
         .orderBy(desc(memberships.createdAt))

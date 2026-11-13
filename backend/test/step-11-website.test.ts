@@ -1,4 +1,7 @@
 import { readFileSync } from 'node:fs';
+import { eq, inArray } from 'drizzle-orm';
+import { db } from '../src/db/client.js';
+import { auditLog, siteImages } from '../src/db/schema.js';
 import request from 'supertest';
 import { beforeEach, describe, expect, it } from 'vitest';
 import { DEFAULT_CONTENT } from '../src/site/content.js';
@@ -127,6 +130,26 @@ describe('photos', () => {
     await request(app).get(`/public/images/${imageId}`).expect(200);
     await save((c) => { c.home.hero.image.imageId = null; });
     await request(app).get(`/public/images/${imageId}`).expect(404);
+  });
+
+  it('clears photos that were uploaded a day ago but never saved, and keeps the rest', async () => {
+    const used = (await upload()).body.imageId;
+    await save((c) => { c.home.hero.image.imageId = used; });
+    const abandoned = (await upload()).body.imageId;
+    const fresh = (await upload()).body.imageId;
+    await db.update(siteImages).set({ createdAt: new Date(Date.now() - 2 * 86_400_000) }).where(inArray(siteImages.id, [used, abandoned]));
+    await upload();
+    await request(app).get(`/public/images/${used}`).expect(200);
+    await request(app).get(`/public/images/${fresh}`).expect(200);
+    await request(app).get(`/public/images/${abandoned}`).expect(404);
+  });
+
+  it('records only the changed sections in the audit log', async () => {
+    await save(() => {});
+    await save((c) => { c.home.hero.title = 'Play tonight.'; });
+    const [, entry] = await db.select().from(auditLog).where(eq(auditLog.action, 'website.updated')).orderBy(auditLog.id);
+    expect(Object.keys(entry!.newValues as object)).toEqual(['home']);
+    expect((entry!.newValues as any).home.hero.title).toBe('Play tonight.');
   });
 });
 

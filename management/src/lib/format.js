@@ -83,7 +83,7 @@ export const endToInput = (time) => (time === '24:00' ? '00:00' : time);
 export const endFromInput = (time) => (time === '00:00' ? '24:00' : time);
 
 export const CUSTOMER_TYPES = { walk_in: 'Walk-in', website: 'Website' };
-export const PAYMENT_LABELS = { cash: 'Cash', upi: 'UPI', online_test: 'Online (test, no real money)' };
+export const PAYMENT_LABELS = { cash: 'Cash', upi: 'UPI', online: 'Online', online_test: 'Online (test, no real money)' };
 export const BLOCK_LABELS = { member_block: 'Member play', staff_block: 'Other block' };
 
 export const MESSAGE_LABELS = {

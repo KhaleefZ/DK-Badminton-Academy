@@ -1,14 +1,11 @@
-import { execFile } from 'node:child_process';
-import { promisify } from 'node:util';
 import { eq } from 'drizzle-orm';
 import { describe, expect, it } from 'vitest';
 import { hashPassword, hashToken, generateToken, verifyPassword } from '../src/auth/crypto.js';
+import { createOwner } from '../src/auth/owner.js';
 import { passwordProblem } from '../src/auth/policy.js';
 import { db, dbErrorCode, DB_ERRORS } from '../src/db/client.js';
 import { staff } from '../src/db/schema.js';
 import { addStaff } from './helpers.js';
-
-const run = promisify(execFile);
 
 async function errorCode(work: Promise<unknown>) {
   try {
@@ -75,9 +72,10 @@ describe('staff accounts in the database', () => {
 });
 
 describe('password and token handling', () => {
-  it('stores an Argon2id hash that verifies only the right password', async () => {
+  it('stores a salted PBKDF2 hash that verifies only the right password', async () => {
     const stored = await hashPassword('correct-horse-battery');
-    expect(stored).toMatch(/^\$argon2id\$/);
+    expect(stored).toMatch(/^pbkdf2\$100000\$[\w-]{22}\$[\w-]{43}$/);
+    expect(await hashPassword('correct-horse-battery')).not.toBe(stored);
     expect(stored).not.toContain('correct-horse-battery');
     expect(await verifyPassword(stored, 'correct-horse-battery')).toBe(true);
     expect(await verifyPassword(stored, 'wrong-horse-battery')).toBe(false);
@@ -103,30 +101,22 @@ describe('password and token handling', () => {
   });
 });
 
-describe('create-owner script', () => {
-  const env = {
-    ...process.env,
-    OWNER_NAME: 'Academy Owner',
-    OWNER_EMAIL: 'Owner@Example.com',
-    OWNER_PASSWORD: 'correct-horse-battery',
-  };
-  const script = () => run('npx', ['tsx', 'src/scripts/create-owner.ts'], { env });
+describe('creating the first Owner', () => {
+  const details = { name: 'Academy Owner', email: 'Owner@Example.com', password: 'correct-horse-battery' };
 
-  it('creates one Owner with a hashed password, then refuses a second run', async () => {
-    const { stdout } = await script();
-    expect(stdout).toMatch(/Owner created: STF-\d+ \(owner@example\.com\)/);
-    expect(stdout).not.toContain(env.OWNER_PASSWORD);
-
+  it('creates one Owner with a hashed password, then refuses a second time', async () => {
+    expect(await createOwner(details)).toMatchObject({ staffNo: expect.stringMatching(/^STF-\d+$/), email: 'owner@example.com' });
     const [owner] = await db.select().from(staff);
     expect(owner).toMatchObject({ email: 'owner@example.com', role: 'owner', status: 'active' });
-    expect(await verifyPassword(owner!.passwordHash, env.OWNER_PASSWORD)).toBe(true);
+    expect(owner!.passwordHash).not.toContain(details.password);
+    expect(await verifyPassword(owner!.passwordHash, details.password)).toBe(true);
 
-    await expect(script()).rejects.toThrow(/already exists/);
+    await expect(createOwner(details)).rejects.toThrow(/already exists/);
     expect(await db.$count(staff)).toBe(1);
   });
 
   it('refuses a weak password', async () => {
-    await expect(run('npx', ['tsx', 'src/scripts/create-owner.ts'], { env: { ...env, OWNER_PASSWORD: 'password123' } })).rejects.toThrow(/too common/);
+    await expect(createOwner({ ...details, password: 'password123' })).rejects.toThrow(/too common/);
     expect(await db.$count(staff)).toBe(0);
   });
 });

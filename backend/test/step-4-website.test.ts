@@ -290,13 +290,13 @@ describe('enquiries', () => {
 });
 
 describe('production safety', () => {
-  it('won’t start in production with test payments on', async () => {
+  it('won’t start in production with the payment simulator on', async () => {
     const original = { NODE_ENV: process.env.NODE_ENV };
     process.env.NODE_ENV = 'production';
-        process.env.PAYMENT_TEST_MODE = 'true';
+    process.env.PAYMENT_SIMULATOR = 'true';
     try {
       vi.resetModules();
-      await expect(import('../src/config.js')).rejects.toThrow(/PAYMENT_TEST_MODE/);
+      await expect(import('../src/config.js')).rejects.toThrow(/PAYMENT_SIMULATOR/);
     } finally {
       Object.assign(process.env, original);
     }

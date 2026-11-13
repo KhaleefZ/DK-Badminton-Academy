@@ -1,10 +1,10 @@
 import type { CookieOptions, Request, Response } from 'express';
-import { and, eq, gt, lt, ne, sql } from 'drizzle-orm';
+import { and, eq, gt, lt, ne } from 'drizzle-orm';
 import { isProduction } from '../config.js';
-import type { DbOrTx } from '../db/client.js';
 import { db } from '../db/client.js';
 import { adminSessions, staff, type Staff } from '../db/schema.js';
 import { generateToken, hashToken } from './crypto.js';
+import { clientIp } from '../lib/rateLimit.js';
 import { AUTH_POLICY } from './policy.js';
 
 export const SESSION_COOKIE = 'dk_admin_session';
@@ -26,7 +26,7 @@ export async function createSession(staffId: string, remember: boolean, req: Req
     staffId,
     tokenHash: hashToken(token),
     remember,
-    ip: req.ip,
+    ip: clientIp(req),
     userAgent: req.get('user-agent'),
     expiresAt: new Date(Date.now() + lifetimeMs),
   });
@@ -59,7 +59,7 @@ export async function findActiveSession(req: Request): Promise<ActiveSession | n
   if (!row || row.staff.status !== 'active' || row.staff.deletedAt) return null;
 
   if (Date.now() - row.session.lastSeenAt.getTime() > LAST_SEEN_INTERVAL_MS) {
-    await db.update(adminSessions).set({ lastSeenAt: sql`now()` }).where(eq(adminSessions.id, row.session.id));
+    await db.update(adminSessions).set({ lastSeenAt: new Date() }).where(eq(adminSessions.id, row.session.id));
   }
   return { sessionId: row.session.id, staff: row.staff };
 }
@@ -69,10 +69,8 @@ export async function deleteSessionByToken(req: Request): Promise<void> {
   if (token) await db.delete(adminSessions).where(eq(adminSessions.tokenHash, hashToken(token)));
 }
 
-export async function deleteAllSessions(staffId: string, conn: DbOrTx = db): Promise<void> {
-  await conn.delete(adminSessions).where(eq(adminSessions.staffId, staffId));
-}
+/** Returned unrun, so it can join a `db.batch`; awaiting it runs it on its own. */
+export const deleteAllSessions = (staffId: string) => db.delete(adminSessions).where(eq(adminSessions.staffId, staffId));
 
-export async function deleteOtherSessions(staffId: string, keepSessionId: string, conn: DbOrTx = db): Promise<void> {
-  await conn.delete(adminSessions).where(and(eq(adminSessions.staffId, staffId), ne(adminSessions.id, keepSessionId)));
-}
+export const deleteOtherSessions = (staffId: string, keepSessionId: string) =>
+  db.delete(adminSessions).where(and(eq(adminSessions.staffId, staffId), ne(adminSessions.id, keepSessionId)));

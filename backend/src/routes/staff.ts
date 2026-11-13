@@ -7,7 +7,7 @@ import { confirmPassword } from '../auth/passwords.js';
 import { deleteAllSessions } from '../auth/sessions.js';
 import { db } from '../db/client.js';
 import { auditLog, staff, staffRole, type Staff } from '../db/schema.js';
-import { writeAudit } from '../lib/audit.js';
+import { auditEntry } from '../lib/audit.js';
 import { invalid, notFound } from '../lib/errors.js';
 import { parseBody, UUID } from '../lib/validate.js';
 import { currentAuth, requirePasswordCurrent, requirePermission, requireSession } from '../middleware/auth.js';
@@ -69,13 +69,13 @@ export function staffRouter(): Router {
 
     const temporaryPassword = generateTemporaryPassword();
     const passwordHash = await hashPassword(temporaryPassword);
-    const created = await db.transaction(async (tx) => {
-      const [row] = await tx.insert(staff).values({ ...values, passwordHash, mustChangePassword: true }).returning();
-      await writeAudit({ action: 'staff.created', actorStaffId: actor.id, entityType: 'staff', entityId: row!.id, newValues: auditFields(row!), req }, tx);
-      return row!;
-    });
+    const id = crypto.randomUUID();
+    const [[created]] = await db.batch([
+      db.insert(staff).values({ ...values, id, passwordHash, mustChangePassword: true }).returning(),
+      auditEntry({ action: 'staff.created', actorStaffId: actor.id, entityType: 'staff', entityId: id, newValues: { ...values, status: 'active' }, req }),
+    ]);
     // Shown once here. Only its hash is kept, so it can never be looked up again.
-    res.status(201).json({ staff: staffView(created), temporaryPassword });
+    res.status(201).json({ staff: staffView(created!), temporaryPassword });
   });
 
   router.patch('/:id', async (req, res) => {
@@ -85,15 +85,12 @@ export function staffRouter(): Router {
     refuseDeleted(target);
     const values = parseBody(details, req.body);
 
-    const updated = await db.transaction(async (tx) => {
-      const [row] = await tx.update(staff).set({ ...values, updatedAt: new Date() }).where(eq(staff.id, target.id)).returning();
-      await writeAudit(
-        { action: 'staff.updated', actorStaffId: actor.id, entityType: 'staff', entityId: target.id, oldValues: auditFields(target), newValues: auditFields(row!), req },
-        tx,
-      );
-      return row!;
-    });
-    res.json({ staff: staffView(updated) });
+    const change = { ...values, updatedAt: new Date() };
+    const [[updated]] = await db.batch([
+      db.update(staff).set(change).where(eq(staff.id, target.id)).returning(),
+      auditEntry({ action: 'staff.updated', actorStaffId: actor.id, entityType: 'staff', entityId: target.id, oldValues: auditFields(target), newValues: auditFields({ ...target, ...change }), req }),
+    ]);
+    res.json({ staff: staffView(updated!) });
   });
 
   router.post('/:id/deactivate', async (req, res) => {
@@ -103,16 +100,13 @@ export function staffRouter(): Router {
     refuseDeleted(target);
     refuseSelf(req, target, 'You can’t deactivate your own account.');
 
-    const updated = await db.transaction(async (tx) => {
-      const [row] = await tx.update(staff).set({ status: 'inactive', updatedAt: new Date() }).where(eq(staff.id, target.id)).returning();
-      await deleteAllSessions(target.id, tx);
-      await writeAudit(
-        { action: 'staff.deactivated', actorStaffId: actor.id, entityType: 'staff', entityId: target.id, oldValues: auditFields(target), newValues: auditFields(row!), req },
-        tx,
-      );
-      return row!;
-    });
-    res.json({ staff: staffView(updated) });
+    const change = { status: 'inactive' as const, updatedAt: new Date() };
+    const [[updated]] = await db.batch([
+      db.update(staff).set(change).where(eq(staff.id, target.id)).returning(),
+      deleteAllSessions(target.id),
+      auditEntry({ action: 'staff.deactivated', actorStaffId: actor.id, entityType: 'staff', entityId: target.id, oldValues: auditFields(target), newValues: auditFields({ ...target, ...change }), req }),
+    ]);
+    res.json({ staff: staffView(updated!) });
   });
 
   router.post('/:id/reactivate', async (req, res) => {
@@ -121,15 +115,12 @@ export function staffRouter(): Router {
     const target = await findTarget(req);
     refuseDeleted(target);
 
-    const updated = await db.transaction(async (tx) => {
-      const [row] = await tx.update(staff).set({ status: 'active', updatedAt: new Date() }).where(eq(staff.id, target.id)).returning();
-      await writeAudit(
-        { action: 'staff.reactivated', actorStaffId: actor.id, entityType: 'staff', entityId: target.id, oldValues: auditFields(target), newValues: auditFields(row!), req },
-        tx,
-      );
-      return row!;
-    });
-    res.json({ staff: staffView(updated) });
+    const change = { status: 'active' as const, updatedAt: new Date() };
+    const [[updated]] = await db.batch([
+      db.update(staff).set(change).where(eq(staff.id, target.id)).returning(),
+      auditEntry({ action: 'staff.reactivated', actorStaffId: actor.id, entityType: 'staff', entityId: target.id, oldValues: auditFields(target), newValues: auditFields({ ...target, ...change }), req }),
+    ]);
+    res.json({ staff: staffView(updated!) });
   });
 
   router.post('/:id/reset-password', async (req, res) => {
@@ -141,14 +132,14 @@ export function staffRouter(): Router {
 
     const temporaryPassword = generateTemporaryPassword();
     const passwordHash = await hashPassword(temporaryPassword);
-    await db.transaction(async (tx) => {
-      await tx
+    await db.batch([
+      db
         .update(staff)
         .set({ passwordHash, mustChangePassword: true, failedLoginAttempts: 0, lockedUntil: null, passwordChangedAt: new Date(), updatedAt: new Date() })
-        .where(eq(staff.id, target.id));
-      await deleteAllSessions(target.id, tx);
-      await writeAudit({ action: 'staff.password_reset', actorStaffId: actor.id, entityType: 'staff', entityId: target.id, req }, tx);
-    });
+        .where(eq(staff.id, target.id)),
+      deleteAllSessions(target.id),
+      auditEntry({ action: 'staff.password_reset', actorStaffId: actor.id, entityType: 'staff', entityId: target.id, req }),
+    ]);
     res.json({ temporaryPassword });
   });
 
@@ -160,14 +151,12 @@ export function staffRouter(): Router {
     refuseDeleted(target);
     refuseSelf(req, target, 'You can’t delete your own account.');
 
-    await db.transaction(async (tx) => {
-      const [row] = await tx.update(staff).set({ deletedAt: new Date(), updatedAt: new Date() }).where(eq(staff.id, target.id)).returning();
-      await deleteAllSessions(target.id, tx);
-      await writeAudit(
-        { action: 'staff.deleted', actorStaffId: actor.id, entityType: 'staff', entityId: target.id, oldValues: auditFields(target), newValues: auditFields(row!), req },
-        tx,
-      );
-    });
+    const change = { deletedAt: new Date(), updatedAt: new Date() };
+    await db.batch([
+      db.update(staff).set(change).where(eq(staff.id, target.id)).returning(),
+      deleteAllSessions(target.id),
+      auditEntry({ action: 'staff.deleted', actorStaffId: actor.id, entityType: 'staff', entityId: target.id, oldValues: auditFields(target), newValues: auditFields({ ...target, ...change }), req }),
+    ]);
     res.status(204).end();
   });
 
@@ -178,15 +167,12 @@ export function staffRouter(): Router {
     const target = await findTarget(req);
     if (!target.deletedAt) throw invalid('This account isn’t in the trash.');
 
-    const updated = await db.transaction(async (tx) => {
-      const [row] = await tx.update(staff).set({ deletedAt: null, status: 'inactive', updatedAt: new Date() }).where(eq(staff.id, target.id)).returning();
-      await writeAudit(
-        { action: 'staff.restored', actorStaffId: actor.id, entityType: 'staff', entityId: target.id, oldValues: auditFields(target), newValues: auditFields(row!), req },
-        tx,
-      );
-      return row!;
-    });
-    res.json({ staff: staffView(updated) });
+    const change = { deletedAt: null, status: 'inactive' as const, updatedAt: new Date() };
+    const [[updated]] = await db.batch([
+      db.update(staff).set(change).where(eq(staff.id, target.id)).returning(),
+      auditEntry({ action: 'staff.restored', actorStaffId: actor.id, entityType: 'staff', entityId: target.id, oldValues: auditFields(target), newValues: auditFields({ ...target, ...change }), req }),
+    ]);
+    res.json({ staff: staffView(updated!) });
   });
 
   router.get('/:id/history', async (req, res) => {

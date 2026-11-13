@@ -4,7 +4,7 @@ import { desc, eq, sql } from 'drizzle-orm';
 import { z } from 'zod';
 import { db, DB_ERRORS, dbErrorCode } from '../db/client.js';
 import { discountType, memberships, referralCodes, referralProgram, referralRedemptions } from '../db/schema.js';
-import { writeAudit } from '../lib/audit.js';
+import { auditEntry } from '../lib/audit.js';
 import { AppError, invalid, notFound } from '../lib/errors.js';
 import { isDate } from '../lib/time.js';
 import { parseBody, UUID } from '../lib/validate.js';
@@ -28,7 +28,7 @@ const codeBody = z.object({
   expiresOn: z.union([z.literal(''), z.string().refine(isDate, 'Choose a valid date.')]).nullish().transform((v) => v || null),
 });
 
-const uses = sql<number>`(SELECT count(*) FROM referral_redemptions r JOIN memberships m ON m.id = r.membership_id WHERE r.code_id = referral_codes.id AND m.status IN ('active', 'pending_payment'))::int`;
+const uses = sql<number>`(SELECT count(*) FROM referral_redemptions r JOIN memberships m ON m.id = r.membership_id WHERE r.code_id = referral_codes.id AND m.status IN ('active', 'pending_payment'))`;
 
 async function uniqueCode<T>(run: () => Promise<T>): Promise<T> {
   try {
@@ -81,22 +81,22 @@ export function referralsRouter(): Router {
   router.put('/program', manage, async (req, res) => {
     const values = parseBody(programBody, req.body);
     const [before] = await db.select().from(referralProgram).where(eq(referralProgram.id, 1));
-    const row = await db.transaction(async (tx) => {
-      const [updated] = await tx.update(referralProgram).set({ ...values, updatedAt: new Date() }).where(eq(referralProgram.id, 1)).returning();
-      await writeAudit({ action: 'referrals.program_updated', actorStaffId: actor(req), entityType: 'settings', entityId: 'referrals', oldValues: before, newValues: updated, req }, tx);
-      return updated;
-    });
+    const change = { ...values, updatedAt: new Date() };
+    const [[row]] = await db.batch([
+      db.update(referralProgram).set(change).where(eq(referralProgram.id, 1)).returning(),
+      auditEntry({ action: 'referrals.program_updated', actorStaffId: actor(req), entityType: 'settings', entityId: 'referrals', oldValues: before, newValues: { ...before, ...change }, req }),
+    ]);
     res.json({ program: row });
   });
 
   router.post('/codes', manage, async (req, res) => {
     const { code, ...values } = parseBody(codeBody, req.body);
-    const row = await uniqueCode(() =>
-      db.transaction(async (tx) => {
-        const [created] = await tx.insert(referralCodes).values({ ...values, code: code ? normaliseCode(code) : generateCode() }).returning();
-        await writeAudit({ action: 'referrals.code_created', actorStaffId: actor(req), entityType: 'referral_code', entityId: created!.id, newValues: created, req }, tx);
-        return created;
-      }),
+    const created = { id: crypto.randomUUID(), ...values, code: code ? normaliseCode(code) : generateCode() };
+    const [[row]] = await uniqueCode(() =>
+      db.batch([
+        db.insert(referralCodes).values(created).returning(),
+        auditEntry({ action: 'referrals.code_created', actorStaffId: actor(req), entityType: 'referral_code', entityId: created.id, newValues: created, req }),
+      ]),
     );
     res.status(201).json({ code: row });
   });
@@ -104,16 +104,12 @@ export function referralsRouter(): Router {
   router.patch('/codes/:id', manage, async (req, res) => {
     const before = await findCode(req);
     const { code, ...values } = parseBody(codeBody, req.body);
-    const row = await uniqueCode(() =>
-      db.transaction(async (tx) => {
-        const [updated] = await tx
-          .update(referralCodes)
-          .set({ ...values, ...(code ? { code: normaliseCode(code) } : {}), updatedAt: new Date() })
-          .where(eq(referralCodes.id, before.id))
-          .returning();
-        await writeAudit({ action: 'referrals.code_updated', actorStaffId: actor(req), entityType: 'referral_code', entityId: before.id, oldValues: before, newValues: updated, req }, tx);
-        return updated;
-      }),
+    const change = { ...values, ...(code ? { code: normaliseCode(code) } : {}), updatedAt: new Date() };
+    const [[row]] = await uniqueCode(() =>
+      db.batch([
+        db.update(referralCodes).set(change).where(eq(referralCodes.id, before.id)).returning(),
+        auditEntry({ action: 'referrals.code_updated', actorStaffId: actor(req), entityType: 'referral_code', entityId: before.id, oldValues: before, newValues: { ...before, ...change }, req }),
+      ]),
     );
     res.json({ code: row });
   });
@@ -122,10 +118,10 @@ export function referralsRouter(): Router {
     const before = await findCode(req);
     if (before.membershipId) throw invalid('A member’s own code can’t be deleted. Switch it off instead.', 'MEMBER_CODE');
     try {
-      await db.transaction(async (tx) => {
-        await tx.delete(referralCodes).where(eq(referralCodes.id, before.id));
-        await writeAudit({ action: 'referrals.code_deleted', actorStaffId: actor(req), entityType: 'referral_code', entityId: before.id, oldValues: before, req }, tx);
-      });
+      await db.batch([
+        db.delete(referralCodes).where(eq(referralCodes.id, before.id)),
+        auditEntry({ action: 'referrals.code_deleted', actorStaffId: actor(req), entityType: 'referral_code', entityId: before.id, oldValues: before, req }),
+      ]);
     } catch (err) {
       if (dbErrorCode(err) === DB_ERRORS.foreignKeyViolation) throw new AppError(409, 'CODE_USED', 'This code has been used, so it can’t be deleted. Switch it off instead.');
       throw err;

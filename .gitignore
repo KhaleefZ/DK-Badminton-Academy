@@ -5,3 +5,5 @@ dist/
 .DS_Store
 .gstack/
 graphify-out/
+.wrangler/
+.dev.vars

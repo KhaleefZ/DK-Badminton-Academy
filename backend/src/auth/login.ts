@@ -19,13 +19,14 @@ export const isLocked = (account: Pick<Staff, 'lockedUntil'>) => Boolean(account
 /** One failure, counted in a single statement so simultaneous attempts can't undercount. */
 export async function recordFailedAttempt(staffId: string): Promise<{ locked: boolean }> {
   const { maxFailedAttempts, lockMinutes } = AUTH_POLICY;
+  const now = Date.now();
   // A lock that has already ended starts a fresh count.
-  const count = sql`CASE WHEN ${staff.lockedUntil} IS NOT NULL AND ${staff.lockedUntil} <= now() THEN 1 ELSE ${staff.failedLoginAttempts} + 1 END`;
+  const count = sql`CASE WHEN ${staff.lockedUntil} IS NOT NULL AND ${staff.lockedUntil} <= ${now} THEN 1 ELSE ${staff.failedLoginAttempts} + 1 END`;
   const [row] = await db
     .update(staff)
     .set({
       failedLoginAttempts: sql`${count}`,
-      lockedUntil: sql`CASE WHEN ${count} >= ${maxFailedAttempts} THEN now() + make_interval(mins => ${lockMinutes}) ELSE NULL END`,
+      lockedUntil: sql`CASE WHEN ${count} >= ${maxFailedAttempts} THEN ${now + lockMinutes * 60_000} ELSE NULL END`,
     })
     .where(eq(staff.id, staffId))
     .returning({ lockedUntil: staff.lockedUntil });

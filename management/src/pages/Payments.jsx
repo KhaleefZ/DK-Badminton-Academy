@@ -22,6 +22,7 @@ import { useResource } from '../lib/useResource';
 const METHOD_OPTIONS = [{ value: 'all', label: 'All methods' }, ...Object.entries(PAYMENT_LABELS).map(([value, label]) => ({ value, label }))];
 const targetOf = (p) => (p.bookingNo ? `/bookings/records/${p.bookingNo}` : `/memberships?selected=${p.membershipId}`);
 const sumPaise = (rows, key) => rows.reduce((sum, row) => sum + row[key], 0);
+const stateOf = (p) => (p.refundedAt ? 'Refunded' : p.voidedAt ? 'Voided' : 'Received');
 
 export default function Payments() {
   const { notify } = useWorkspace();
@@ -41,6 +42,8 @@ export default function Payments() {
   if (method !== 'all') search.set('method', method);
   const receiptsRes = useResource(`/payments?${search}`);
   const duesRes = useResource(q ? `/bookings?payment=Due&q=${encodeURIComponent(q)}` : '/bookings?payment=Due');
+  const issuesRes = useResource('/payments/issues');
+  const issues = issuesRes.data?.issues ?? [];
 
   const receipts = receiptsRes.data?.payments ?? [];
   const live = receipts.filter((p) => !p.voidedAt);
@@ -53,6 +56,7 @@ export default function Payments() {
     close();
     receiptsRes.reload();
     duesRes.reload();
+    issuesRes.reload();
     notify(message);
   };
 
@@ -67,6 +71,7 @@ export default function Payments() {
         <KpiTile label={date === today && !q ? 'Received today' : 'Received'} value={formatPaise(sumPaise(live, 'amountPaise'))} caption={`${live.length} ${live.length === 1 ? 'receipt' : 'receipts'}`} />
         <KpiTile label="Cash" value={formatPaise(sumPaise(live.filter((p) => p.method === 'cash'), 'amountPaise'))} caption="Should match the cash drawer" />
         <KpiTile label="UPI" value={formatPaise(sumPaise(live.filter((p) => p.method === 'upi'), 'amountPaise'))} caption="Should match the bank statement" />
+        <KpiTile label="Online" value={formatPaise(sumPaise(live.filter((p) => p.method === 'online'), 'amountPaise'))} caption="Paid on the website; settles to the bank" />
         <KpiTile label="Bookings outstanding" value={formatPaise(sumPaise(dues, 'outstandingPaise'))} caption={`${dues.length} unpaid ${dues.length === 1 ? 'booking' : 'bookings'}`} />
       </KpiRow>
 
@@ -90,6 +95,46 @@ export default function Payments() {
         <div role="alert">
           <Notice tone="warning">{receiptsRes.error || duesRes.error}</Notice>
         </div>
+      )}
+
+      {issues.length > 0 && (
+        <Panel title="Needs attention" meta={`${issues.length} online ${issues.length === 1 ? 'payment' : 'payments'}`}>
+          <ul className="issue-list">
+            {issues.map((issue) => (
+              <li key={issue.id} className="issue-list__item">
+                <div>
+                  <p>{issue.message}</p>
+                  <p className="fine muted">
+                    {formatInstant(issue.createdAt)} IST
+                    {issue.bookingNo && (
+                      <>
+                        {' · '}
+                        <Link to={`/bookings/records/${issue.bookingNo}`}>{issue.bookingNo}</Link>
+                      </>
+                    )}
+                    {issue.membershipNo && (
+                      <>
+                        {' · '}
+                        <Link to={`/memberships?selected=${issue.membershipId}`}>{issue.membershipNo}</Link>
+                      </>
+                    )}
+                  </p>
+                </div>
+                {can('payments.void') && (
+                  <Button
+                    icon={false}
+                    onClick={async () => {
+                      await api(`/payments/issues/${issue.id}/resolve`, { method: 'POST' });
+                      changed('Marked as done.');
+                    }}
+                  >
+                    Mark done
+                  </Button>
+                )}
+              </li>
+            ))}
+          </ul>
+        </Panel>
       )}
 
       <div className="detail-layout">
@@ -123,7 +168,7 @@ export default function Payments() {
                               </td>
                               <td>{p.customerName}</td>
                               <td>{PAYMENT_LABELS[p.method]}</td>
-                              <td>{p.voidedAt ? <StatusBadge status="Cancelled">Voided {formatPaise(p.amountPaise)}</StatusBadge> : formatPaise(p.amountPaise)}</td>
+                              <td>{p.voidedAt ? <StatusBadge status="Cancelled">{stateOf(p)} {formatPaise(p.amountPaise)}</StatusBadge> : formatPaise(p.amountPaise)}</td>
                             </tr>
                           );
                         })}
@@ -184,7 +229,7 @@ export default function Payments() {
         <div className="stack-lg">
           {receipt && (
             <Panel className="detail-panel" title={`Receipt ${receipt.receiptNo}`}>
-              <StatusBadge status={receipt.voidedAt ? 'Cancelled' : 'Paid'}>{receipt.voidedAt ? 'Voided' : 'Received'}</StatusBadge>
+              <StatusBadge status={receipt.voidedAt ? 'Cancelled' : 'Paid'}>{stateOf(receipt)}</StatusBadge>
               <Link to={receipt.customerId ? `/customers?selected=${receipt.customerId}` : targetOf(receipt)} className="detail-panel__name">
                 {receipt.customerName}
               </Link>
@@ -200,13 +245,14 @@ export default function Payments() {
                 {receipt.voidedAt && (
                   <>
                     <br />
-                    Voided: {receipt.voidReason}
+                    {receipt.refundedAt ? `Refunded ${formatInstant(receipt.refundedAt)} IST` : 'Voided'}: {receipt.voidReason}
                   </>
                 )}
               </p>
               <div className="detail-panel__actions">
                 <Button onClick={() => setDialog({ type: 'receipt' })}>View receipt</Button>
-                {!receipt.voidedAt && can('payments.void') && <Button onClick={() => setDialog({ type: 'void' })}>Void receipt</Button>}
+                {!receipt.voidedAt && can('payments.void') && receipt.method === 'online' && <Button onClick={() => setDialog({ type: 'refund' })}>Refund</Button>}
+                {!receipt.voidedAt && can('payments.void') && receipt.method !== 'online' && <Button onClick={() => setDialog({ type: 'void' })}>Void receipt</Button>}
               </div>
             </Panel>
           )}
@@ -240,6 +286,21 @@ export default function Payments() {
               <p className="fine muted">{receipt.voidedAt ? `VOIDED: ${receipt.voidReason}` : 'Not a tax invoice.'}</p>
             </div>
           </ConfirmDialog>
+        )}
+        {dialog?.type === 'refund' && receipt && (
+          <ActionDialog
+            key="refund"
+            title={`Refund ${receipt.receiptNo}?`}
+            description={`${formatPaise(receipt.amountPaise)} goes back to the customer through the payment gateway, usually within 5–7 working days. The booking or membership isn’t cancelled: do that separately if needed.`}
+            label="Refund payment"
+            reasonLabel="Reason"
+            reasonRequired
+            onClose={close}
+            onConfirm={async (reason) => {
+              await api(`/payments/${receipt.id}/refund`, { method: 'POST', body: { reason } });
+              changed(`${receipt.receiptNo} refunded.`);
+            }}
+          />
         )}
         {dialog?.type === 'void' && receipt && (
           <ActionDialog

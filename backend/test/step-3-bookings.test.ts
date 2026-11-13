@@ -1,7 +1,7 @@
-import { eq } from 'drizzle-orm';
+import { eq, sql } from 'drizzle-orm';
 import request from 'supertest';
 import { beforeEach, describe, expect, it } from 'vitest';
-import { db, pool } from '../src/db/client.js';
+import { db } from '../src/db/client.js';
 import { auditLog, courtReservations, courts, customers } from '../src/db/schema.js';
 import { addDays, instantAt, venueToday } from '../src/lib/time.js';
 import { addStaff, ORIGIN, signIn, testApp } from './helpers.js';
@@ -67,8 +67,9 @@ describe('customers', () => {
   });
 
   it('keeps numbers unique past their usual width', async () => {
-    const { rows } = await pool.query(`SELECT dk_number('WLK-', 7, 4) AS small, dk_number('WLK-', 12345, 4) AS large`);
-    expect(rows[0]).toEqual({ small: 'WLK-0007', large: 'WLK-12345' });
+    // The same format nextNumber uses for every record number.
+    const [row] = await db.all<{ small: string; large: string }>(sql`SELECT printf('WLK-%04d', 7) AS small, printf('WLK-%04d', 12345) AS large`);
+    expect(row).toEqual({ small: 'WLK-0007', large: 'WLK-12345' });
   });
 
   it.each([[{ name: ' ' }], [{ phone: 'abc' }], [{ phone: '' }], [{ email: 'nope' }]])('refuses %j', async (over) => {
@@ -388,5 +389,22 @@ describe('reports', () => {
     expect((await call('get', `/reports?from=${today}&to=${addDays(today, 7)}`)).body.periods).toHaveLength(2);
     await call('get', `/reports?from=${today}&to=${addDays(today, -1)}`).expect(400);
     await call('get', `/reports?from=${today}&to=${addDays(today, 400)}`).expect(400);
+  });
+});
+
+describe('requests arriving together', () => {
+  it('books a slot for exactly one of ten people who ask at the same moment', async () => {
+    const customer = await addCustomer();
+    const attempts = await Promise.all(Array.from({ length: 10 }, () => call('post', '/bookings').send({ ...slot(), customerId: customer.id })));
+    expect(attempts.filter((r) => r.status === 201)).toHaveLength(1);
+    for (const r of attempts.filter((a) => a.status !== 201)) expect(r.body.error.code).toBe('SLOT_TAKEN');
+    expect(await db.$count(courtReservations)).toBe(1);
+  });
+
+  it('never takes more than a booking owes when two receipts are entered at once', async () => {
+    const booking = await book();
+    const results = await Promise.all([30000, 30000].map((amountPaise) => call('post', `/bookings/${booking.id}/payments`).send({ amountPaise, method: 'cash' })));
+    expect(results.map((r) => r.status).sort()).toEqual([201, 409]);
+    expect(results.find((r) => r.status === 409)!.body.error.code).toBe('OVERPAYMENT');
   });
 });

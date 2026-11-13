@@ -1,19 +1,19 @@
 import { useCallback, useEffect, useState } from 'react';
 import { Navigate, useNavigate, useParams } from 'react-router-dom';
-import Button from '../../components/Button';
 import Notice from '../../components/Notice';
 import BookingStepper from '../../booking/BookingStepper';
 import BookingSummary from '../../booking/BookingSummary';
 import TestModeNotice from '../../booking/TestModeNotice';
 import { useBooking } from '../../booking/BookingContext';
-import { formatPaise } from '../../booking/schedule';
+import PayButtons from '../../booking/PayButtons';
 import { api } from '../../lib/api';
+import { usePaymentInfo } from '../../lib/payments';
 import { fill, useContent } from '../../lib/site';
 
 const remaining = (until) => Math.max(0, Math.ceil((new Date(until).getTime() - Date.now()) / 1000));
 const clock = (seconds) => `${Math.floor(seconds / 60)}:${String(seconds % 60).padStart(2, '0')}`;
 
-/** Stands in for the payment gateway while test mode is on. */
+/** The pay step: the gateway's checkout, or the simulator's buttons in local development. */
 export default function Pay() {
   const { token } = useParams();
   const navigate = useNavigate();
@@ -24,6 +24,7 @@ export default function Pay() {
   const [error, setError] = useState('');
   const [missing, setMissing] = useState(false);
   const text = useContent().booking.pay;
+  const info = usePaymentInfo();
 
   const load = useCallback(async () => {
     try {
@@ -54,18 +55,9 @@ export default function Pay() {
 
   if (missing) return <Navigate to="/booking" replace />;
 
-  const pay = async (result) => {
-    setPending(true);
-    setError('');
-    try {
-      await api(`/bookings/${token}/pay`, { method: 'POST', body: { result } });
-      reset();
-      navigate(`/booking/status/${token}`, { replace: true });
-    } catch (err) {
-      setError(err.message);
-      if (err.code === 'HOLD_EXPIRED') load();
-      setPending(false);
-    }
+  const settled = (record) => {
+    if (record.status === 'active') reset();
+    navigate(`/booking/status/${token}`, { replace: true });
   };
 
   const release = async () => {
@@ -84,7 +76,7 @@ export default function Pay() {
     <div className="booking-page">
       <div className="container">
         <BookingStepper current={3} />
-        <TestModeNotice className="booking-page__notice" />
+        {info?.testMode && <TestModeNotice className="booking-page__notice" />}
 
         <div className="booking-layout">
           <section className="stack booking-layout__main" aria-labelledby="pay-heading">
@@ -104,16 +96,7 @@ export default function Pay() {
                 <Notice>{error}</Notice>
               </div>
             )}
-            {booking && (
-              <div className="button-row">
-                <Button icon={false} disabled={pending} aria-busy={pending} onClick={() => pay('success')}>
-                  Pay {formatPaise(booking.amountPaise)} (test)
-                </Button>
-                <Button variant="secondary" icon={false} disabled={pending} onClick={() => pay('failure')}>
-                  Simulate a failed payment
-                </Button>
-              </div>
-            )}
+            {booking && <PayButtons info={info} base={`/bookings/${token}`} recordKey="booking" amountPaise={booking.amountPaise} text={text} onSettled={settled} onExpired={load} />}
             {booking && (
               <button type="button" className="link-button fine" disabled={pending} onClick={release}>
                 {text.releaseButton}

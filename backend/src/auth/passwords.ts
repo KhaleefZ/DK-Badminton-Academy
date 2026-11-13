@@ -1,9 +1,9 @@
 import type { Request } from 'express';
-import { and, eq, gt, isNull, sql } from 'drizzle-orm';
+import { and, eq, gt, isNull } from 'drizzle-orm';
 import { config } from '../config.js';
 import { db } from '../db/client.js';
 import { passwordResetTokens, staff, type Staff } from '../db/schema.js';
-import { writeAudit } from '../lib/audit.js';
+import { auditEntry } from '../lib/audit.js';
 import type { Mailer } from '../lib/email.js';
 import { AppError, invalid } from '../lib/errors.js';
 import { generateToken, hashPassword, hashToken, verifyPassword } from './crypto.js';
@@ -27,7 +27,7 @@ export async function confirmPassword(account: Staff, password: unknown, req: Re
   if (typeof password !== 'string' || !password) throw invalid('Enter your password to confirm.', 'PASSWORD_REQUIRED');
   if (!(await verifyPassword(account.passwordHash, password))) {
     await recordFailedAttempt(account.id);
-    await writeAudit({ action: 'auth.confirm_failed', actorStaffId: account.id, entityType: 'staff', entityId: account.id, req });
+    await auditEntry({ action: 'auth.confirm_failed', actorStaffId: account.id, entityType: 'staff', entityId: account.id, req });
     throw invalid('Your password is incorrect.', 'WRONG_PASSWORD');
   }
 }
@@ -38,17 +38,17 @@ export async function changeOwnPassword(account: Staff, sessionId: string, curre
   if (newPassword === currentPassword) throw invalid('Choose a password different from your current one.', 'WEAK_PASSWORD');
 
   const passwordHash = await hashPassword(newPassword);
-  return db.transaction(async (tx) => {
-    const [updated] = await tx
+  const [[updated]] = await db.batch([
+    db
       .update(staff)
       .set({ passwordHash, mustChangePassword: false, failedLoginAttempts: 0, lockedUntil: null, passwordChangedAt: new Date(), updatedAt: new Date() })
       .where(eq(staff.id, account.id))
-      .returning();
+      .returning(),
     // Anyone else using this account is signed out; this device carries on.
-    await deleteOtherSessions(account.id, sessionId, tx);
-    await writeAudit({ action: 'auth.password_changed', actorStaffId: account.id, entityType: 'staff', entityId: account.id, req }, tx);
-    return updated!;
-  });
+    deleteOtherSessions(account.id, sessionId),
+    auditEntry({ action: 'auth.password_changed', actorStaffId: account.id, entityType: 'staff', entityId: account.id, req }),
+  ]);
+  return updated!;
 }
 
 /** Does nothing visible for an unknown account: the caller's answer must not reveal who exists. */
@@ -70,16 +70,16 @@ export async function sendPasswordReset(email: string, mailer: Mailer, req: Requ
   if (recent) return;
 
   const token = generateToken();
-  await db.transaction(async (tx) => {
+  await db.batch([
     // Only the newest link works.
-    await tx.delete(passwordResetTokens).where(eq(passwordResetTokens.staffId, account.id));
-    await tx.insert(passwordResetTokens).values({
+    db.delete(passwordResetTokens).where(eq(passwordResetTokens.staffId, account.id)),
+    db.insert(passwordResetTokens).values({
       staffId: account.id,
       tokenHash: hashToken(token),
       expiresAt: new Date(Date.now() + AUTH_POLICY.resetLinkMinutes * 60_000),
-    });
-    await writeAudit({ action: 'auth.reset_requested', entityType: 'staff', entityId: account.id, req }, tx);
-  });
+    }),
+    auditEntry({ action: 'auth.reset_requested', entityType: 'staff', entityId: account.id, req }),
+  ]);
 
   await mailer.send({
     to: account.email,
@@ -112,20 +112,20 @@ export async function resetPasswordWithToken(token: string, newPassword: string,
   assertAcceptablePassword(newPassword, account.email);
   const passwordHash = await hashPassword(newPassword);
 
-  await db.transaction(async (tx) => {
-    // Marking it used in one statement means two requests with the same link can't both succeed.
-    const used = await tx
-      .update(passwordResetTokens)
-      .set({ usedAt: sql`now()` })
-      .where(and(eq(passwordResetTokens.tokenHash, tokenHash), isNull(passwordResetTokens.usedAt)))
-      .returning({ id: passwordResetTokens.id });
-    if (!used.length) throw invalid(INVALID_LINK, 'INVALID_RESET_LINK');
+  // Marking it used in one statement means two requests with the same link can't both succeed.
+  const used = await db
+    .update(passwordResetTokens)
+    .set({ usedAt: new Date() })
+    .where(and(eq(passwordResetTokens.tokenHash, tokenHash), isNull(passwordResetTokens.usedAt)))
+    .returning({ id: passwordResetTokens.id });
+  if (!used.length) throw invalid(INVALID_LINK, 'INVALID_RESET_LINK');
 
-    await tx
+  await db.batch([
+    db
       .update(staff)
       .set({ passwordHash, mustChangePassword: false, failedLoginAttempts: 0, lockedUntil: null, passwordChangedAt: new Date(), updatedAt: new Date() })
-      .where(eq(staff.id, account.id));
-    await deleteAllSessions(account.id, tx);
-    await writeAudit({ action: 'auth.password_reset', actorStaffId: account.id, entityType: 'staff', entityId: account.id, req }, tx);
-  });
+      .where(eq(staff.id, account.id)),
+    deleteAllSessions(account.id),
+    auditEntry({ action: 'auth.password_reset', actorStaffId: account.id, entityType: 'staff', entityId: account.id, req }),
+  ]);
 }

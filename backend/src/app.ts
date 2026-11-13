@@ -2,12 +2,12 @@ import cookieParser from 'cookie-parser';
 import cors from 'cors';
 import express from 'express';
 import type { NextFunction, Request, Response } from 'express';
-import { rateLimit } from 'express-rate-limit';
 import helmet from 'helmet';
 import { config } from './config.js';
 import { DB_ERRORS, dbErrorCode } from './db/client.js';
 import { defaultMailer, type Mailer } from './lib/email.js';
 import { AppError } from './lib/errors.js';
+import { limitRequests, memoryLimiter, type Limiter } from './lib/rateLimit.js';
 import { requireTrustedOrigin } from './middleware/origin.js';
 import { authRouter } from './routes/auth.js';
 import { availabilityRouter } from './routes/availability.js';
@@ -26,6 +26,8 @@ import { searchRouter } from './routes/search.js';
 import { settingsRouter } from './routes/settings.js';
 import { siteContentRouter } from './routes/siteContent.js';
 import { staffRouter } from './routes/staff.js';
+import { paymentSettingsRouter } from './routes/paymentSettings.js';
+import { webhooksRouter } from './routes/webhooks.js';
 
 type AppOptions = {
   /** Login attempts allowed from one network in the window. */
@@ -34,6 +36,8 @@ type AppOptions = {
   resetLimitPerWindow?: number;
   /** Website bookings and enquiries allowed from one network in the window. */
   publicWriteLimitPerWindow?: number;
+  /** On Cloudflare, limiters backed by its rate-limit bindings. Otherwise each process counts in memory. */
+  limiters?: { login?: Limiter; reset?: Limiter; publicWrite?: Limiter };
   mailer?: Mailer;
 };
 
@@ -44,16 +48,19 @@ const DB_ERROR_RESPONSES: Record<string, { code: string; message: string }> = {
   [DB_ERRORS.lastOwner]: { code: 'LAST_OWNER', message: 'There must always be one active Owner. Make someone else an Owner first.' },
   [DB_ERRORS.uniqueViolation]: { code: 'DUPLICATE', message: 'That email is already used by another staff account.' },
   [DB_ERRORS.exclusionViolation]: { code: 'SLOT_TAKEN', message: 'That court is already reserved for some of this time.' },
+  [DB_ERRORS.batchFull]: { code: 'BATCH_FULL', message: 'That batch is full.' },
+  [DB_ERRORS.referralUsedUp]: { code: 'INVALID_REFERRAL', message: 'That referral code isn’t valid.' },
+  [DB_ERRORS.overpayment]: { code: 'OVERPAYMENT', message: 'That’s more than is still owed. Refresh and check the balance.' },
 };
 
-const tooManyRequests = (message: string) => ({ error: { code: 'TOO_MANY_REQUESTS', message } });
-
-export function createApp({ loginLimitPerWindow = 50, resetLimitPerWindow = 10, publicWriteLimitPerWindow = 20, mailer = defaultMailer() }: AppOptions = {}) {
+export function createApp({ loginLimitPerWindow = 50, resetLimitPerWindow = 10, publicWriteLimitPerWindow = 20, limiters = {}, mailer = defaultMailer() }: AppOptions = {}) {
   const app = express();
   app.disable('x-powered-by');
-  app.set('trust proxy', config.TRUST_PROXY_HOPS);
 
   app.use(helmet());
+  // Payment gateways post here. The signature is checked over the exact bytes received, so this
+  // reads the raw body and comes before the JSON parser and the origin checks below.
+  app.use('/webhooks', express.raw({ type: () => true, limit: '256kb' }), webhooksRouter());
   // The website's text is saved in one go, so it gets more room than any other request.
   app.use('/site-content', express.json({ limit: '1mb' }));
   app.use(express.json({ limit: '32kb' }));
@@ -66,13 +73,10 @@ export function createApp({ loginLimitPerWindow = 50, resetLimitPerWindow = 10, 
 
   // The website has no login, so its routes sit apart: they never read a session cookie,
   // and the website's origin can't reach anything below this line.
-  const publicWriteLimiter = rateLimit({
-    windowMs: LIMIT_WINDOW_MS,
-    limit: publicWriteLimitPerWindow,
-    standardHeaders: 'draft-8',
-    legacyHeaders: false,
-    message: tooManyRequests('Too many requests from this network. Try again in a few minutes, or contact the academy.'),
-  });
+  const publicWriteLimiter = limitRequests(
+    limiters.publicWrite ?? memoryLimiter(publicWriteLimitPerWindow, LIMIT_WINDOW_MS),
+    'Too many requests from this network. Try again in a few minutes, or contact the academy.',
+  );
   app.use('/public', cors({ origin: config.WEBSITE_ORIGIN }), requireTrustedOrigin(config.WEBSITE_ORIGIN), publicRouter({ writeLimiter: publicWriteLimiter }));
 
   app.use(cors({ origin: config.ADMIN_ORIGIN, credentials: true }));
@@ -83,22 +87,14 @@ export function createApp({ loginLimitPerWindow = 50, resetLimitPerWindow = 10, 
     res.json({ status: 'ok' });
   });
 
-  const loginLimiter = rateLimit({
-    windowMs: LIMIT_WINDOW_MS,
-    limit: loginLimitPerWindow,
-    standardHeaders: 'draft-8',
-    legacyHeaders: false,
-    message: tooManyRequests('Too many attempts from this network. Try again in a few minutes.'),
-  });
-  const resetLimiter = rateLimit({
-    windowMs: LIMIT_WINDOW_MS,
-    limit: resetLimitPerWindow,
-    standardHeaders: 'draft-8',
-    legacyHeaders: false,
-    message: tooManyRequests('Too many password reset requests from this network. Try again in a few minutes.'),
-  });
+  const loginLimiter = limitRequests(limiters.login ?? memoryLimiter(loginLimitPerWindow, LIMIT_WINDOW_MS), 'Too many attempts from this network. Try again in a few minutes.');
+  const resetLimiter = limitRequests(
+    limiters.reset ?? memoryLimiter(resetLimitPerWindow, LIMIT_WINDOW_MS),
+    'Too many password reset requests from this network. Try again in a few minutes.',
+  );
   app.use('/auth', authRouter({ loginLimiter, resetLimiter, mailer }));
   app.use('/staff', staffRouter());
+  app.use('/settings/payments', paymentSettingsRouter());
   app.use('/settings', settingsRouter());
   app.use('/availability', availabilityRouter());
   app.use('/customers', customersRouter());

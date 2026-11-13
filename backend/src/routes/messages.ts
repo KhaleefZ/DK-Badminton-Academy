@@ -5,10 +5,10 @@ import { z } from 'zod';
 import { confirmPassword } from '../auth/passwords.js';
 import { db } from '../db/client.js';
 import { messageSettings, messages, messageStatus } from '../db/schema.js';
-import { writeAudit } from '../lib/audit.js';
+import { auditEntry } from '../lib/audit.js';
 import type { Mailer } from '../lib/email.js';
 import { invalid, notFound, AppError } from '../lib/errors.js';
-import { likeTerm } from '../lib/search.js';
+import { likeTerm, ilike } from '../lib/search.js';
 import { encrypt } from '../lib/secret.js';
 import { parseBody, UUID } from '../lib/validate.js';
 import { friendlyMailError } from '../messages/queue.js';
@@ -64,16 +64,12 @@ export function messagesRouter({ mailer }: { mailer: Mailer }): Router {
     if (senderChanged) await confirmPassword(actor(req), req.body?.currentPassword, req);
 
     const { appPassword, removePassword, ...plain } = values;
-    const row = await db.transaction(async (tx) => {
-      const [updated] = await tx
-        .update(messageSettings)
-        .set({ ...plain, ...(appPassword ? { appPasswordEncrypted: encrypt(appPassword) } : removePassword ? { appPasswordEncrypted: null } : {}), updatedAt: new Date() })
-        .where(eq(messageSettings.id, 1))
-        .returning();
-      await writeAudit({ action: 'messages.settings_updated', actorStaffId: actor(req).id, entityType: 'settings', entityId: 'messages', oldValues: settingsView(before), newValues: settingsView(updated!), req }, tx);
-      return updated!;
-    });
-    res.json({ settings: settingsView(row) });
+    const change = { ...plain, ...(appPassword ? { appPasswordEncrypted: encrypt(appPassword) } : removePassword ? { appPasswordEncrypted: null } : {}), updatedAt: new Date() };
+    const [[row]] = await db.batch([
+      db.update(messageSettings).set(change).where(eq(messageSettings.id, 1)).returning(),
+      auditEntry({ action: 'messages.settings_updated', actorStaffId: actor(req).id, entityType: 'settings', entityId: 'messages', oldValues: settingsView(before), newValues: settingsView({ ...before, ...change }), req }),
+    ]);
+    res.json({ settings: settingsView(row!) });
   });
 
   router.post('/settings/test', owner, async (req, res) => {
@@ -93,7 +89,7 @@ export function messagesRouter({ mailer }: { mailer: Mailer }): Router {
     const rows = await db
       .select()
       .from(messages)
-      .where(and(status ? eq(messages.status, status) : undefined, q ? sql`(${messages.recipient} ILIKE ${likeTerm(q)} OR ${messages.subject} ILIKE ${likeTerm(q)})` : undefined))
+      .where(and(status ? eq(messages.status, status) : undefined, q ? sql`(${ilike(messages.recipient, likeTerm(q))} OR ${ilike(messages.subject, likeTerm(q))})` : undefined))
       .orderBy(desc(messages.createdAt))
       .limit(200);
     res.json({ messages: rows });

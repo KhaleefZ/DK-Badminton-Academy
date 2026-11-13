@@ -4,9 +4,9 @@ import { and, desc, eq, sql } from 'drizzle-orm';
 import { z } from 'zod';
 import { db } from '../db/client.js';
 import { enquiries, enquiryStatus } from '../db/schema.js';
-import { writeAudit } from '../lib/audit.js';
+import { auditEntry } from '../lib/audit.js';
 import { notFound } from '../lib/errors.js';
-import { likeTerm } from '../lib/search.js';
+import { likeTerm, ilike } from '../lib/search.js';
 import { parseBody, UUID } from '../lib/validate.js';
 import { currentAuth, requirePasswordCurrent, requirePermission, requireSession } from '../middleware/auth.js';
 
@@ -38,7 +38,7 @@ export function enquiriesRouter(): Router {
       .where(
         and(
           status ? eq(enquiries.status, status) : undefined,
-          q ? sql`(${enquiries.enquiryNo} ILIKE ${term} OR ${enquiries.name} ILIKE ${term} OR ${enquiries.email} ILIKE ${term} OR ${enquiries.phone} ILIKE ${term} OR ${enquiries.message} ILIKE ${term})` : undefined,
+          q ? sql`(${ilike(enquiries.enquiryNo, term)} OR ${ilike(enquiries.name, term)} OR ${ilike(enquiries.email, term)} OR ${ilike(enquiries.phone, term)} OR ${ilike(enquiries.message, term)})` : undefined,
         ),
       )
       .orderBy(desc(enquiries.createdAt))
@@ -49,20 +49,19 @@ export function enquiriesRouter(): Router {
   router.patch('/:id', async (req, res) => {
     const before = await findEnquiry(req);
     const values = parseBody(update, req.body);
-    const row = await db.transaction(async (tx) => {
-      const [updated] = await tx.update(enquiries).set({ ...values, updatedAt: new Date() }).where(eq(enquiries.id, before.id)).returning();
-      await writeAudit({ action: 'enquiry.updated', actorStaffId: actor(req), entityType: 'enquiry', entityId: before.id, oldValues: { status: before.status }, newValues: { status: values.status }, req }, tx);
-      return updated;
-    });
+    const [[row]] = await db.batch([
+      db.update(enquiries).set({ ...values, updatedAt: new Date() }).where(eq(enquiries.id, before.id)).returning(),
+      auditEntry({ action: 'enquiry.updated', actorStaffId: actor(req), entityType: 'enquiry', entityId: before.id, oldValues: { status: before.status }, newValues: { status: values.status }, req }),
+    ]);
     res.json({ enquiry: row });
   });
 
   router.delete('/:id', async (req, res) => {
     const before = await findEnquiry(req);
-    await db.transaction(async (tx) => {
-      await tx.delete(enquiries).where(eq(enquiries.id, before.id));
-      await writeAudit({ action: 'enquiry.deleted', actorStaffId: actor(req), entityType: 'enquiry', entityId: before.id, oldValues: { enquiryNo: before.enquiryNo, name: before.name }, req }, tx);
-    });
+    await db.batch([
+      db.delete(enquiries).where(eq(enquiries.id, before.id)),
+      auditEntry({ action: 'enquiry.deleted', actorStaffId: actor(req), entityType: 'enquiry', entityId: before.id, oldValues: { enquiryNo: before.enquiryNo, name: before.name }, req }),
+    ]);
     res.status(204).end();
   });
 

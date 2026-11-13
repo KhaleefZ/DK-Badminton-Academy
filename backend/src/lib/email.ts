@@ -1,5 +1,4 @@
 import { eq } from 'drizzle-orm';
-import nodemailer from 'nodemailer';
 import { isProduction } from '../config.js';
 import { db } from '../db/client.js';
 import { messageSettings } from '../db/schema.js';
@@ -32,8 +31,12 @@ export function defaultMailer(): Mailer {
         console.log(`\n--- Email not sent (no sender saved in Settings) ---\nTo: ${to}\nSubject: ${subject}\n\n${text}\n---\n`);
         return;
       }
-      const transport = nodemailer.createTransport({ service: 'gmail', auth: { user: sender.senderEmail!, pass: decrypt(sender.appPasswordEncrypted!) } });
-      await transport.sendMail({ from: { name: sender.senderName || DEFAULT_SENDER_NAME, address: sender.senderEmail! }, to, subject, text });
+      // Loaded only here: it opens a raw connection through `cloudflare:sockets`, which exists only on Cloudflare.
+      const { WorkerMailer } = await import('worker-mailer');
+      await WorkerMailer.send(
+        { host: 'smtp.gmail.com', port: 465, secure: true, authType: ['plain', 'login'], credentials: { username: sender.senderEmail!, password: decrypt(sender.appPasswordEncrypted!) } },
+        { from: { name: sender.senderName || DEFAULT_SENDER_NAME, email: sender.senderEmail! }, to, subject, text },
+      );
     },
   };
 }

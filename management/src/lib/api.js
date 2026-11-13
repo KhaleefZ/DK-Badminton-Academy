@@ -1,6 +1,6 @@
 // Every call to the backend goes through here. The session lives in an httpOnly cookie the
 // browser sends by itself, so page scripts never see or store a token.
-export const API_URL = (import.meta.env.VITE_API_URL || 'http://localhost:4000').replace(/\/$/, '');
+export const API_URL = (import.meta.env.VITE_API_URL || 'http://localhost:8787').replace(/\/$/, '');
 
 export class ApiError extends Error {
   constructor(message, { status = 0, code = 'NETWORK_ERROR' } = {}) {

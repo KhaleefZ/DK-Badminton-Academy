@@ -1,15 +1,10 @@
 // Creates the first Owner account. There is no default password anywhere in the code:
-// run `npm run create-owner` once and type the details when asked.
+// run `npm run create-owner` once and type the details when asked. Add `-- --remote` for the live database.
 import { stdin, stdout } from 'node:process';
 import { createInterface } from 'node:readline';
 import { Writable } from 'node:stream';
-import { eq } from 'drizzle-orm';
-import { z } from 'zod';
-import { hashPassword } from '../auth/crypto.js';
-import { passwordProblem } from '../auth/policy.js';
-import { db, pool } from '../db/client.js';
-import { staff } from '../db/schema.js';
-import { writeAudit } from '../lib/audit.js';
+import { createOwner } from '../auth/owner.js';
+import { connect } from './connect.js';
 
 function ask(question: string, hidden = false): Promise<string> {
   // A muted output stream keeps a typed password off the screen.
@@ -26,39 +21,23 @@ function ask(question: string, hidden = false): Promise<string> {
 }
 
 async function main() {
-  const [existing] = await db.select({ id: staff.id }).from(staff).where(eq(staff.role, 'owner')).limit(1);
-  if (existing) {
-    console.error('An Owner already exists. Add other staff from the admin panel.');
-    process.exitCode = 1;
-    return;
-  }
-
   // Non-interactive use reads the same details from the environment.
-  const name = (process.env.OWNER_NAME ?? (await ask('Full name: '))).trim();
-  const email = (process.env.OWNER_EMAIL ?? (await ask('Email: '))).trim().toLowerCase();
+  const name = process.env.OWNER_NAME ?? (await ask('Full name: '));
+  const email = process.env.OWNER_EMAIL ?? (await ask('Email: '));
   const password = process.env.OWNER_PASSWORD ?? (await ask('Password (hidden): ', true));
-
-  if (!name) throw new Error('Enter a name.');
-  if (!z.string().email().safeParse(email).success) throw new Error('Enter a valid email.');
-  const problem = passwordProblem(password, email);
-  if (problem) throw new Error(problem);
   if (!process.env.OWNER_PASSWORD && (await ask('Repeat password (hidden): ', true)) !== password) {
     throw new Error('The passwords don’t match.');
   }
-
-  const [owner] = await db
-    .insert(staff)
-    .values({ name, email, role: 'owner', passwordHash: await hashPassword(password) })
-    .returning({ id: staff.id, staffNo: staff.staffNo });
-  await writeAudit({ action: 'staff.created', actorStaffId: owner!.id, entityType: 'staff', entityId: owner!.id, newValues: { name, email, role: 'owner' } });
-  console.log(`Owner created: ${owner!.staffNo} (${email})`);
+  const owner = await createOwner({ name, email, password });
+  console.log(`Owner created: ${owner.staffNo} (${owner.email})`);
 }
 
+const connection = await connect();
 try {
   await main();
 } catch (err) {
   console.error(err instanceof Error ? err.message : err);
   process.exitCode = 1;
 } finally {
-  await pool.end();
+  await connection.close();
 }

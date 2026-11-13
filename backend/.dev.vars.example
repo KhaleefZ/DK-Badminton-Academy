@@ -1,0 +1,14 @@
+# Copy to .dev.vars for `npm run dev` (wrangler dev). Never commit .dev.vars.
+# These override the production values in wrangler.jsonc while running locally.
+NODE_ENV=development
+# A button stands in for paying while no gateway is switched on in Settings. Never on in production.
+PAYMENT_SIMULATOR=true
+
+# The admin panel's address. Only this origin may call the API with a session.
+ADMIN_ORIGIN=http://localhost:5174
+WEBSITE_ORIGIN=http://localhost:5173
+
+# Signs private links and encrypts the saved Gmail app password. In production set it with
+#   npx wrangler secret put APP_SECRET
+# Leave it out locally to use the development default.
+# APP_SECRET=

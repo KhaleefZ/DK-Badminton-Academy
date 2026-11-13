@@ -164,7 +164,7 @@ describe('login records', () => {
     await failLogin('owner@example.com', 10);
     expect(await db.$count(auditLog, eq(auditLog.action, 'auth.account_locked'))).toBe(1);
 
-    await db.execute(sql`TRUNCATE audit_log`);
+    await db.delete(auditLog);
     await login('typed-my-password@example.com', PASSWORD);
     expect(await db.$count(auditLog)).toBe(0);
   });

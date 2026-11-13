@@ -3,7 +3,7 @@ import type { Request } from 'express';
 import { and, desc, eq, gt, isNotNull, isNull, sql } from 'drizzle-orm';
 import { db } from '../db/client.js';
 import { bookings, courtReservations, customers, customerType } from '../db/schema.js';
-import { writeAudit } from '../lib/audit.js';
+import { auditEntry } from '../lib/audit.js';
 import { AppError, notFound } from '../lib/errors.js';
 import { customerDetails, WALK_IN_NUMBER } from '../lib/customers.js';
 import { customerMatches } from '../lib/search.js';
@@ -13,10 +13,10 @@ import { bookingViews } from './bookings.js';
 
 /** What's owed across a customer's active bookings. */
 const dueSql = sql<number>`coalesce((
-  SELECT sum(greatest(b.amount_paise - coalesce((SELECT sum(p.amount_paise) FROM payments p WHERE p.booking_id = b.id AND p.voided_at IS NULL), 0), 0))
+  SELECT sum(max(b.amount_paise - coalesce((SELECT sum(p.amount_paise) FROM payments p WHERE p.booking_id = b.id AND p.voided_at IS NULL), 0), 0))
   FROM bookings b WHERE b.customer_id = customers.id AND b.status = 'active'
-), 0)::int`;
-const bookingCountSql = sql<number>`(SELECT count(*) FROM bookings b WHERE b.customer_id = customers.id AND b.status = 'active')::int`;
+), 0)`;
+const bookingCountSql = sql<number>`(SELECT count(*) FROM bookings b WHERE b.customer_id = customers.id AND b.status = 'active')`;
 
 async function findCustomer(req: Request) {
   const id = String(req.params.id);
@@ -46,11 +46,11 @@ export function customersRouter(): Router {
 
   router.post('/', async (req, res) => {
     const values = parseBody(customerDetails, req.body);
-    const row = await db.transaction(async (tx) => {
-      const [created] = await tx.insert(customers).values({ ...values, type: 'walk_in', customerNo: WALK_IN_NUMBER }).returning();
-      await writeAudit({ action: 'customer.created', actorStaffId: actor(req), entityType: 'customer', entityId: created!.id, newValues: created, req }, tx);
-      return created;
-    });
+    const id = crypto.randomUUID();
+    const [[row]] = await db.batch([
+      db.insert(customers).values({ ...values, id, type: 'walk_in', customerNo: WALK_IN_NUMBER() }).returning(),
+      auditEntry({ action: 'customer.created', actorStaffId: actor(req), entityType: 'customer', entityId: id, newValues: { ...values, id, type: 'walk_in' }, req }),
+    ]);
     res.status(201).json({ customer: row });
   });
 
@@ -63,11 +63,11 @@ export function customersRouter(): Router {
     const before = await findCustomer(req);
     if (before.deletedAt) throw notFound('That customer');
     const values = parseBody(customerDetails, req.body);
-    const row = await db.transaction(async (tx) => {
-      const [updated] = await tx.update(customers).set({ ...values, updatedAt: new Date() }).where(eq(customers.id, before.id)).returning();
-      await writeAudit({ action: 'customer.updated', actorStaffId: actor(req), entityType: 'customer', entityId: before.id, oldValues: before, newValues: updated, req }, tx);
-      return updated;
-    });
+    const change = { ...values, updatedAt: new Date() };
+    const [[row]] = await db.batch([
+      db.update(customers).set(change).where(eq(customers.id, before.id)).returning(),
+      auditEntry({ action: 'customer.updated', actorStaffId: actor(req), entityType: 'customer', entityId: before.id, oldValues: before, newValues: { ...before, ...change }, req }),
+    ]);
     res.json({ customer: row });
   });
 
@@ -82,20 +82,19 @@ export function customersRouter(): Router {
       .where(and(eq(bookings.customerId, before.id), eq(bookings.status, 'active'), gt(courtReservations.endsAt, new Date())))
       .limit(1);
     if (upcoming.length) throw new AppError(409, 'CUSTOMER_HAS_BOOKINGS', 'This customer has upcoming bookings. Cancel them first.');
-    await db.transaction(async (tx) => {
-      await tx.update(customers).set({ deletedAt: new Date() }).where(eq(customers.id, before.id));
-      await writeAudit({ action: 'customer.deleted', actorStaffId: actor(req), entityType: 'customer', entityId: before.id, oldValues: before, req }, tx);
-    });
+    await db.batch([
+      db.update(customers).set({ deletedAt: new Date() }).where(eq(customers.id, before.id)),
+      auditEntry({ action: 'customer.deleted', actorStaffId: actor(req), entityType: 'customer', entityId: before.id, oldValues: before, req }),
+    ]);
     res.status(204).end();
   });
 
   router.post('/:id/restore', async (req, res) => {
     const before = await findCustomer(req);
-    const row = await db.transaction(async (tx) => {
-      const [updated] = await tx.update(customers).set({ deletedAt: null }).where(eq(customers.id, before.id)).returning();
-      await writeAudit({ action: 'customer.restored', actorStaffId: actor(req), entityType: 'customer', entityId: before.id, req }, tx);
-      return updated;
-    });
+    const [[row]] = await db.batch([
+      db.update(customers).set({ deletedAt: null }).where(eq(customers.id, before.id)).returning(),
+      auditEntry({ action: 'customer.restored', actorStaffId: actor(req), entityType: 'customer', entityId: before.id, req }),
+    ]);
     res.json({ customer: row });
   });
 

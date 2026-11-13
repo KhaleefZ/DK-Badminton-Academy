@@ -1,12 +1,11 @@
 import { and, eq, gte, inArray, lte, sql } from 'drizzle-orm';
-import { paymentTestMode } from '../config.js';
-import { db, type DbOrTx } from '../db/client.js';
+import { db } from '../db/client.js';
 import { bookings, courtReservations, courts, customers, enquiries, messageSettings, messages, memberships, referralCodes, referralProgram } from '../db/schema.js';
 import type { Mailer } from '../lib/email.js';
+import { isTestMoney, onlinePayments } from '../payments/gateway.js';
 import { instantAt, periodView, venueToday } from '../lib/time.js';
 import { bookingLink, membershipLink } from './links.js';
 
-const WORKER_INTERVAL_MS = 15_000;
 const BATCH_SIZE = 10;
 const MAX_ATTEMPTS = 5;
 // How long to wait after the 1st, 2nd, 3rd and 4th failure.
@@ -29,8 +28,8 @@ const INTROS: Record<BookingEvent, string> = {
   cancelled: 'Your booking has been cancelled. Contact the academy if you have any questions.',
 };
 
-async function loadBooking(conn: DbOrTx, bookingId: string) {
-  const [row] = await conn
+async function loadBooking(bookingId: string) {
+  const [row] = await db
     .select({ booking: bookings, customer: customers, reservation: courtReservations, courtName: courts.name })
     .from(bookings)
     .innerJoin(customers, eq(bookings.customerId, customers.id))
@@ -42,9 +41,9 @@ async function loadBooking(conn: DbOrTx, bookingId: string) {
 
 const money = (paise: number) => `Rs ${(paise / 100).toLocaleString('en-IN', { maximumFractionDigits: 2 })}`;
 
-/** Queues the customer's email in the caller's transaction, so it exists only if the change saved. False if they have no email. */
-export async function enqueueBookingMessage(conn: DbOrTx, bookingId: string, event: BookingEvent, createdBy?: string): Promise<boolean> {
-  const { booking, customer, reservation, courtName } = await loadBooking(conn, bookingId);
+/** Queues the customer's email. Called once the change has saved. False if they have no email. */
+export async function enqueueBookingMessage(bookingId: string, event: BookingEvent, createdBy?: string): Promise<boolean> {
+  const { booking, customer, reservation, courtName } = await loadBooking(bookingId);
   if (!customer.email) return false;
   const when = periodView(reservation.startsAt, reservation.endsAt);
   const lines = [
@@ -60,11 +59,11 @@ export async function enqueueBookingMessage(conn: DbOrTx, bookingId: string, eve
     '',
     'See your booking any time: {{link}}',
     'Keep this link private. Anyone with it can see this booking.',
-    ...(paymentTestMode && booking.source === 'website' ? ['', 'Test mode: no real money was taken for this booking.'] : []),
+    ...(booking.source === 'website' && isTestMoney(await onlinePayments()) ? ['', 'Test mode: no real money was taken for this booking.'] : []),
     '',
     SIGN_OFF,
   ];
-  await conn.insert(messages).values({
+  await db.insert(messages).values({
     template: `booking_${event}`,
     recipient: customer.email,
     subject: `${SUBJECTS[event]} · ${booking.bookingNo}`,
@@ -77,17 +76,17 @@ export async function enqueueBookingMessage(conn: DbOrTx, bookingId: string, eve
   return true;
 }
 
-const staffAddress = async (conn: DbOrTx) => {
-  const [row] = await conn.select().from(messageSettings).where(eq(messageSettings.id, 1));
+const staffAddress = async () => {
+  const [row] = await db.select().from(messageSettings).where(eq(messageSettings.id, 1));
   return row?.notifyEmail || row?.senderEmail || null;
 };
 
-export async function enqueueStaffBookingAlert(conn: DbOrTx, bookingId: string) {
-  const to = await staffAddress(conn);
+export async function enqueueStaffBookingAlert(bookingId: string) {
+  const to = await staffAddress();
   if (!to) return;
-  const { booking, customer, reservation, courtName } = await loadBooking(conn, bookingId);
+  const { booking, customer, reservation, courtName } = await loadBooking(bookingId);
   const when = periodView(reservation.startsAt, reservation.endsAt);
-  await conn.insert(messages).values({
+  await db.insert(messages).values({
     template: 'staff_new_booking',
     recipient: to,
     subject: `New website booking · ${booking.bookingNo}`,
@@ -98,9 +97,9 @@ export async function enqueueStaffBookingAlert(conn: DbOrTx, bookingId: string) 
 }
 
 /** The customer's copy never repeats what they typed, so the form can't be used to send other people spam. */
-export async function enqueueEnquiryMessages(conn: DbOrTx, enquiry: typeof enquiries.$inferSelect) {
+export async function enqueueEnquiryMessages(enquiry: typeof enquiries.$inferSelect) {
   const expiresAt = new Date(Date.now() + ENQUIRY_MESSAGE_LIFETIME_DAYS * 86_400_000);
-  await conn.insert(messages).values({
+  await db.insert(messages).values({
     template: 'enquiry_received',
     recipient: enquiry.email,
     subject: `We received your enquiry · ${enquiry.enquiryNo}`,
@@ -108,9 +107,9 @@ export async function enqueueEnquiryMessages(conn: DbOrTx, enquiry: typeof enqui
     enquiryId: enquiry.id,
     expiresAt,
   });
-  const to = await staffAddress(conn);
+  const to = await staffAddress();
   if (!to) return;
-  await conn.insert(messages).values({
+  await db.insert(messages).values({
     template: 'staff_new_enquiry',
     recipient: to,
     subject: `New enquiry · ${enquiry.enquiryNo}`,
@@ -136,13 +135,13 @@ const MEMBERSHIP_INTROS: Record<MembershipEvent, string> = {
 };
 
 /** False if the member has no email. */
-export async function enqueueMembershipMessage(conn: DbOrTx, membershipId: string, event: MembershipEvent, createdBy?: string): Promise<boolean> {
-  const [m] = await conn.select().from(memberships).where(eq(memberships.id, membershipId));
+export async function enqueueMembershipMessage(membershipId: string, event: MembershipEvent, createdBy?: string): Promise<boolean> {
+  const [m] = await db.select().from(memberships).where(eq(memberships.id, membershipId));
   if (!m?.email) return false;
-  const [program] = await conn.select({ enabled: referralProgram.enabled }).from(referralProgram);
-  const [code] = await conn.select({ code: referralCodes.code }).from(referralCodes).where(eq(referralCodes.membershipId, membershipId));
+  const [program] = await db.select({ enabled: referralProgram.enabled }).from(referralProgram);
+  const [code] = await db.select({ code: referralCodes.code }).from(referralCodes).where(eq(referralCodes.membershipId, membershipId));
   const shareable = program?.enabled && code && event === 'confirmed' ? ['', `Know someone who'd like to play? Your referral code is ${code.code}.`] : [];
-  await conn.insert(messages).values({
+  await db.insert(messages).values({
     template: `membership_${event}`,
     recipient: m.email,
     subject: `${MEMBERSHIP_SUBJECTS[event]} · ${m.membershipNo}`,
@@ -157,7 +156,7 @@ export async function enqueueMembershipMessage(conn: DbOrTx, membershipId: strin
       'See your membership any time: {{link}}',
       'Keep this link private. Anyone with it can see this membership.',
       ...shareable,
-      ...(paymentTestMode && m.source === 'website' ? ['', 'Test mode: no real money was taken for this membership.'] : []),
+      ...(m.source === 'website' && isTestMoney(await onlinePayments()) ? ['', 'Test mode: no real money was taken for this membership.'] : []),
       '',
       SIGN_OFF,
     ].join('\n'),
@@ -167,11 +166,11 @@ export async function enqueueMembershipMessage(conn: DbOrTx, membershipId: strin
   return true;
 }
 
-export async function enqueueStaffMembershipAlert(conn: DbOrTx, membershipId: string) {
-  const to = await staffAddress(conn);
+export async function enqueueStaffMembershipAlert(membershipId: string) {
+  const to = await staffAddress();
   if (!to) return;
-  const [m] = await conn.select().from(memberships).where(eq(memberships.id, membershipId));
-  await conn.insert(messages).values({
+  const [m] = await db.select().from(memberships).where(eq(memberships.id, membershipId));
+  await db.insert(messages).values({
     template: 'staff_new_membership',
     recipient: to,
     subject: `New website membership · ${m!.membershipNo}`,
@@ -180,12 +179,13 @@ export async function enqueueStaffMembershipAlert(conn: DbOrTx, membershipId: st
   });
 }
 
-/** Gmail's own errors are technical, and staff need to know what to do. */
+/** Gmail's own errors are technical, and staff need to know what to do. They arrive as SMTP reply text. */
 export function friendlyMailError(err: unknown): string {
-  const e = err as { code?: unknown; responseCode?: unknown; message?: unknown };
-  if (e?.code === 'EAUTH' || e?.responseCode === 535) return 'Gmail refused the sender address or app password. Check them in Settings.';
-  if (e?.code === 'ECONNECTION' || e?.code === 'ETIMEDOUT' || e?.code === 'EDNS') return 'Couldn’t reach Gmail. It will try again.';
-  if (e?.responseCode === 550 || e?.responseCode === 553) return 'The email address was refused.';
+  const e = err as { message?: unknown };
+  const text = String(e?.message ?? '');
+  if (/authentication|\b535\b|\b534\b/i.test(text)) return 'Gmail refused the sender address or app password. Check them in Settings.';
+  if (/timeout|connection closed|failed to connect|socket/i.test(text)) return 'Couldn’t reach Gmail. It will try again.';
+  if (/RCPT TO[^]*\b(550|553)\b/i.test(text)) return 'The email address was refused.';
   return String(e?.message ?? 'The email could not be sent.').slice(0, 300);
 }
 
@@ -204,28 +204,24 @@ export async function processMessages(mailer: Mailer, now = new Date()): Promise
   if (!settings?.emailEnabled || (mailer.ready && !(await mailer.ready()))) return { sent: 0, failed: 0 };
 
   const [{ today }] = (await db
-    .select({ today: sql<number>`count(*)::int` })
+    .select({ today: sql<number>`count(*)` })
     .from(messages)
     .where(and(eq(messages.channel, 'email'), eq(messages.status, 'sent'), gte(messages.sentAt, instantAt(venueToday(now), 0))))) as [{ today: number }];
   const room = Math.min(BATCH_SIZE, settings.dailyEmailLimit - today);
   if (room <= 0) return { sent: 0, failed: 0 };
 
-  const claimed = await db.transaction(async (tx) => {
-    const rows = await tx
-      .select()
-      .from(messages)
-      .where(and(eq(messages.status, 'queued'), eq(messages.channel, 'email'), lte(messages.nextAttemptAt, now)))
-      .orderBy(messages.createdAt)
-      .limit(room)
-      .for('update', { skipLocked: true });
-    if (rows.length) {
-      await tx
-        .update(messages)
-        .set({ status: 'sending', attempts: sql`${messages.attempts} + 1`, nextAttemptAt: now })
-        .where(inArray(messages.id, rows.map((r) => r.id)));
-    }
-    return rows;
-  });
+  // Claimed in one statement, so two runs at once can't both take the same message.
+  const due = db
+    .select({ id: messages.id })
+    .from(messages)
+    .where(and(eq(messages.status, 'queued'), eq(messages.channel, 'email'), lte(messages.nextAttemptAt, now)))
+    .orderBy(messages.createdAt)
+    .limit(room);
+  const claimed = await db
+    .update(messages)
+    .set({ status: 'sending', attempts: sql`${messages.attempts} + 1`, nextAttemptAt: now })
+    .where(and(inArray(messages.id, due), eq(messages.status, 'queued')))
+    .returning();
 
   let sent = 0;
   let failed = 0;
@@ -237,7 +233,8 @@ export async function processMessages(mailer: Mailer, now = new Date()): Promise
       await db.update(messages).set({ status: 'sent', sentAt: new Date(), lastError: null }).where(eq(messages.id, message.id));
       sent += 1;
     } catch (err) {
-      const attempts = message.attempts + 1;
+      // Already counted when it was claimed.
+      const attempts = message.attempts;
       const giveUp = attempts >= MAX_ATTEMPTS;
       await db
         .update(messages)
@@ -251,17 +248,4 @@ export async function processMessages(mailer: Mailer, now = new Date()): Promise
     }
   }
   return { sent, failed };
-}
-
-export function startMessageWorker(mailer: Mailer): NodeJS.Timeout {
-  let running = false;
-  return setInterval(() => {
-    if (running) return;
-    running = true;
-    processMessages(mailer)
-      .catch((err: unknown) => console.error('Message queue:', err instanceof Error ? err.message : err))
-      .finally(() => {
-        running = false;
-      });
-  }, WORKER_INTERVAL_MS);
 }

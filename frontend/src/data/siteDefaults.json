@@ -429,7 +429,12 @@
       "timerBefore": "Pay within",
       "timerAfter": "to confirm {bookingNo}.",
       "loading": "Loading your booking…",
-      "releaseButton": "Release this slot and choose another"
+      "releaseButton": "Release this slot and choose another",
+      "payButton": "Pay {amount}",
+      "checking": "Checking your payment…",
+      "slow": "We haven’t heard back from the payment gateway yet. If money left your account, your booking will be confirmed, or the money refunded, automatically. This can take a few minutes.",
+      "closed": "The payment wasn’t completed. Your slot is still held, so you can try again.",
+      "unavailable": "Online payment isn’t available right now. Please call or WhatsApp the academy to book."
     },
     "outcome": {
       "confirmedOverline": "04 / Confirmed",
@@ -504,7 +509,12 @@
       "whatsappButton": "Message us on WhatsApp",
       "whatsappMessage": "Hi, this is about my membership {membershipNo}.",
       "notFound": "We couldn’t find this membership. Check the link, or contact the academy.",
-      "loading": "Loading your membership…"
+      "loading": "Loading your membership…",
+      "payButton": "Pay {amount}",
+      "checking": "Checking your payment…",
+      "slow": "We haven’t heard back from the payment gateway yet. If money left your account, your membership will be confirmed, or the money refunded, automatically. This can take a few minutes.",
+      "closed": "The payment wasn’t completed. Your place is still held, so you can try again.",
+      "unavailable": "Online payment isn’t available right now. Please call or WhatsApp the academy to join."
     }
   },
   "notFound": {

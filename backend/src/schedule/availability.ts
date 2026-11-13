@@ -1,6 +1,6 @@
-import { and, asc, eq, gt, isNull, lt, or, sql } from 'drizzle-orm';
-import { db, type DbOrTx } from '../db/client.js';
-import { closures, courtReservations, courts, openingHours, priceRules, settings } from '../db/schema.js';
+import { and, asc, eq, gt, inArray, isNull, lt, lte, or, sql } from 'drizzle-orm';
+import { db } from '../db/client.js';
+import { bookings, closures, courtReservations, courts, memberships, openingHours, priceRules, settings } from '../db/schema.js';
 import { addDays, instantAt, toTime, venueToday, weekdayOf } from '../lib/time.js';
 
 type Rule = { courtId: string | null; startMinute: number; endMinute: number; ratePaise: number };
@@ -18,29 +18,23 @@ export function slotPrice(rules: Rule[], courtId: string, start: number, end: nu
 }
 
 /** Website holds that ran out of time give their slot back. Checked whenever slots matter, so no background job is needed. */
-export async function releaseExpiredHolds(conn: DbOrTx = db) {
-  await conn.execute(sql`
-    WITH expired AS (
-      UPDATE bookings SET status = 'expired', updated_at = now()
-      WHERE status = 'pending_payment' AND hold_expires_at <= now()
-      RETURNING reservation_id
-    )
-    UPDATE court_reservations SET status = 'released' WHERE id IN (SELECT reservation_id FROM expired)
-  `);
-  await conn.execute(sql`
-    WITH expired AS (
-      UPDATE memberships SET status = 'expired', hold_expires_at = NULL, updated_at = now()
-      WHERE status = 'pending_payment' AND hold_expires_at <= now()
-      RETURNING id
-    )
-    UPDATE court_reservations SET status = 'released' WHERE membership_id IN (SELECT id FROM expired)
-  `);
+export async function releaseExpiredHolds() {
+  const now = new Date();
+  const expiredBooking = and(eq(bookings.status, 'pending_payment'), lte(bookings.holdExpiresAt, now));
+  const expiredMembership = and(eq(memberships.status, 'pending_payment'), lte(memberships.holdExpiresAt, now));
+  // One batch, so a hold's slot and its status always change together. Slots go first, while the holds still match.
+  await db.batch([
+    db.update(courtReservations).set({ status: 'released' }).where(inArray(courtReservations.id, db.select({ id: bookings.reservationId }).from(bookings).where(expiredBooking))),
+    db.update(bookings).set({ status: 'expired', updatedAt: now }).where(expiredBooking),
+    db.update(courtReservations).set({ status: 'released' }).where(inArray(courtReservations.membershipId, db.select({ id: memberships.id }).from(memberships).where(expiredMembership))),
+    db.update(memberships).set({ status: 'expired', holdExpiresAt: null, updatedAt: now }).where(expiredMembership),
+  ]);
 }
 
 /** What a court and time cost at today's rates, or null if a minute has no price. */
-export async function quote(courtId: string, date: string, start: number, end: number, conn: DbOrTx = db) {
+export async function quote(courtId: string, date: string, start: number, end: number) {
   const weekday = weekdayOf(date);
-  const rules = await conn.select().from(priceRules);
+  const rules = await db.select().from(priceRules);
   return slotPrice(rules.filter((r) => r.days.includes(weekday)), courtId, start, end);
 }
 
@@ -117,8 +111,8 @@ export async function reservationsDuring(courtId: string | null, startsAt: Date,
     .orderBy(asc(courtReservations.startsAt));
 }
 
-export async function closureDuring(courtId: string, startsAt: Date, endsAt: Date, conn: DbOrTx = db) {
-  const [row] = await conn
+export async function closureDuring(courtId: string, startsAt: Date, endsAt: Date) {
+  const [row] = await db
     .select({ id: closures.id })
     .from(closures)
     .where(and(lt(closures.startsAt, endsAt), gt(closures.endsAt, startsAt), or(isNull(closures.courtId), eq(closures.courtId, courtId))))
