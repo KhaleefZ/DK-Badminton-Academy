@@ -111,6 +111,11 @@
   cursor: not-allowed;
 }
 
+/* Spans its column, e.g. to line up with the booking summary above it */
+.btn--full {
+  width: 100%;
+}
+
 @media (max-width: 899px) {
   .btn--block-mobile {
     display: none;

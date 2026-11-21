@@ -1,15 +1,21 @@
 import { Check } from 'lucide-react';
 import { formatPaise, slotLabel } from './schedule';
 
-/** DK / Booking slot grid: Available · Selected · Unavailable. */
-export default function SlotGrid({ slots, value, onChange, className = '' }) {
+const STATE_TEXT = { blocked: 'Blocked', unavailable: 'Unavailable' };
+
+/**
+ * DK / Booking slot grid: Selected · Available · Blocked · Unavailable.
+ * A slot's `status` comes from the server ('available', 'blocked' or 'unavailable'); only available ones can be picked.
+ * `selection` is the chosen time ({ start, end }); every slot inside it shows as selected.
+ */
+export default function SlotGrid({ slots, selection = null, onSelect, label = 'Time slots', className = '' }) {
   return (
-    <div className={`slot-grid ${className}`} role="radiogroup" aria-label="Time slots">
-      {slots.map((slot) => {
-        const selected = value === slot.start;
-        const state = selected ? 'selected' : slot.available ? 'available' : 'unavailable';
+    <div className={`slot-grid ${className}`} role="group" aria-label={label}>
+      {slots.map((slot, index) => {
+        const selected = selection !== null && slot.start >= selection.start && slot.end <= selection.end;
+        const state = selected ? 'selected' : slot.available ? 'available' : slot.status === 'blocked' ? 'blocked' : 'unavailable';
         return (
-          <button key={slot.start} type="button" role="radio" aria-checked={selected} disabled={!slot.available} className={`slot slot--${state}`} onClick={() => onChange(slot)}>
+          <button key={slot.start} type="button" aria-pressed={selected} disabled={!slot.available && !selected} className={`slot slot--${state}`} onClick={() => onSelect(slot, index)}>
             <span className="slot__time">{slotLabel(slot)}</span>
             <span className="slot__state">
               {selected ? (
@@ -19,7 +25,7 @@ export default function SlotGrid({ slots, value, onChange, className = '' }) {
               ) : slot.available ? (
                 formatPaise(slot.pricePaise)
               ) : (
-                'Unavailable'
+                STATE_TEXT[state]
               )}
             </span>
           </button>

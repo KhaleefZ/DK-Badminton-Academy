@@ -1,6 +1,6 @@
 import { Router } from 'express';
 import type { Request, RequestHandler } from 'express';
-import { and, eq, gt, sql } from 'drizzle-orm';
+import { and, eq, gt, isNull, sql } from 'drizzle-orm';
 import { z } from 'zod';
 import { hashToken } from '../auth/crypto.js';
 import { db, previousChanged, runBatch, type Statement } from '../db/client.js';
@@ -13,7 +13,7 @@ import { bookingToken } from '../messages/links.js';
 import { enqueueBookingMessage, enqueueEnquiryMessages, enqueueStaffBookingAlert } from '../messages/queue.js';
 import { publicMembershipRoutes } from './publicMemberships.js';
 import { publicSite } from '../site/content.js';
-import { availabilityFor, releaseExpiredHolds } from '../schedule/availability.js';
+import { availabilityFor, quote, releaseExpiredHolds } from '../schedule/availability.js';
 import { prepareReservation } from '../schedule/reservations.js';
 import { WEBSITE_NUMBER } from '../lib/customers.js';
 import { photoKey, photos } from '../storage.js';
@@ -21,6 +21,10 @@ import { onlinePayments, paymentInfo, webhookUrl } from '../payments/gateway.js'
 import { startBookingCheckout, syncOrder } from '../payments/settle.js';
 
 const MAX_LIVE_HOLDS = 2;
+
+/** The website shows 30-minute slots; a booking joins two or more of them, back to back. */
+const WEBSITE_STEP = 30;
+const WEBSITE_MIN_MINUTES = 60;
 
 // A hidden field people never see. Bots that fill in every box give themselves away.
 const trap = z.string().max(0, 'This request was blocked.').optional();
@@ -31,15 +35,33 @@ const indianMobile = z
   .refine((v) => /^[6-9]\d{9}$/.test(v), 'Enter a valid 10-digit mobile number.');
 const email = z.string({ error: 'Enter an email address.' }).trim().toLowerCase().email('Enter a valid email address.').max(254);
 const name = z.string({ error: 'Enter your name.' }).trim().min(1, 'Enter your name.').max(120);
+// A booking's name: the same rules the website form checks, so a bad request gets the same message.
+const bookingName = z
+  .string({ error: 'Enter your full name.' })
+  .trim()
+  .min(1, 'Enter your full name.')
+  .min(2, 'Enter at least 2 letters.')
+  .max(120, 'Keep the name to 120 characters or fewer.')
+  .regex(/^[\p{L}\p{M}][\p{L}\p{M} .'-]*$/u, 'Use letters only. Spaces, dots, apostrophes and hyphens are fine.');
 
 const bookingRequest = z.object({
   courtId: z.string({ error: 'Choose a court.' }).regex(UUID, 'Choose a court.'),
   date: z.string({ error: 'Choose a date.' }).refine(isDate, 'Choose a valid date.'),
   start: z.string({ error: 'Choose a time.' }),
-  name,
+  // Two or more 30-minute slots in a row. Opening hours set the real upper limit.
+  durationMinutes: z
+    .number({ error: 'Choose how long to book.' })
+    .int()
+    .min(WEBSITE_MIN_MINUTES, 'A booking must be at least 1 hour.')
+    .max(1440, 'A booking can’t run past the end of the day.')
+    .refine((m) => m % WEBSITE_STEP === 0, 'A booking must be in 30-minute steps.')
+    .optional()
+    .default(WEBSITE_MIN_MINUTES),
+  name: bookingName,
   phone: indianMobile,
-  email,
-  notes: z.string().trim().max(1000).nullish().transform((v) => v || null),
+  // Optional for a booking: name and phone are enough to reach the player.
+  email: z.union([z.literal(''), email]).nullish().transform((v) => v || null),
+  notes: z.string().trim().max(1000, 'Keep notes to 1,000 characters or fewer.').nullish().transform((v) => v || null),
   website: trap,
 });
 
@@ -139,7 +161,7 @@ export function publicRouter({ writeLimiter }: { writeLimiter: RequestHandler })
   router.get('/availability', async (req, res) => {
     const { date } = req.query;
     if (!isDate(date)) throw invalid('Choose a valid date.');
-    const day = await availabilityFor(date);
+    const day = await availabilityFor(date, new Date(), { stepMinutes: WEBSITE_STEP });
     const payment = paymentInfo(await onlinePayments());
     res.json({
       date: day.date,
@@ -148,11 +170,16 @@ export function publicRouter({ writeLimiter }: { writeLimiter: RequestHandler })
       lastOnlineDate: day.lastOnlineDate,
       onlineBooking: payment.online,
       testMode: payment.testMode,
-      // Say nothing about why a slot is taken, or by whom.
+      minBookingMinutes: WEBSITE_MIN_MINUTES,
+      // Say nothing about why a slot is taken, or by whom: only whether it's free, blocked off by the venue, or unavailable.
       courts: day.courts.map((court) => ({
         id: court.id,
         name: court.name,
-        slots: court.slots.map((s) => ({ start: s.start, end: s.end, pricePaise: s.pricePaise, available: payment.online && s.onlineBookable })),
+        slots: court.slots.map((s) => {
+          const available = payment.online && s.onlineBookable;
+          const blocked = s.status === 'closed' || s.reservationKind === 'staff_block';
+          return { start: s.start, end: s.end, pricePaise: s.pricePaise, available, status: available ? 'available' : blocked ? 'blocked' : 'unavailable' };
+        }),
       })),
     });
   });
@@ -162,11 +189,18 @@ export function publicRouter({ writeLimiter }: { writeLimiter: RequestHandler })
     const values = parseBody(bookingRequest, req.body);
 
     // The price and limits come from the server's own slot, never from what the browser sent.
-    const day = await availabilityFor(values.date);
-    const slot = day.courts.find((c) => c.id === values.courtId)?.slots.find((s) => s.start === values.start);
-    if (!slot?.onlineBookable) throw new AppError(409, 'SLOT_TAKEN', 'That slot was just taken or is no longer available. Please choose another.');
-    const start = toMinutes(slot.start)!;
-    const end = toMinutes(slot.end)!;
+    const day = await availabilityFor(values.date, new Date(), { stepMinutes: WEBSITE_STEP });
+    const courtSlots = day.courts.find((c) => c.id === values.courtId)?.slots ?? [];
+    const start = toMinutes(values.start);
+    if (start === null) throw invalid('Choose a valid time.');
+    const end = start + values.durationMinutes;
+    // Every 30-minute slot in the booking must exist (so it sits inside opening hours) and be free to book online.
+    for (let minute = start; minute < end; minute += WEBSITE_STEP) {
+      const part = courtSlots.find((s) => toMinutes(s.start) === minute);
+      if (!part?.onlineBookable) throw new AppError(409, 'SLOT_TAKEN', 'That time was just taken or is no longer available. Please choose another.');
+    }
+    const amountPaise = await quote(values.courtId, values.date, start, end);
+    if (amountPaise === null) throw new AppError(409, 'SLOT_TAKEN', 'That time can’t be booked online. Please choose another.');
 
     const id = crypto.randomUUID();
     const token = bookingToken(id);
@@ -177,7 +211,7 @@ export function publicRouter({ writeLimiter }: { writeLimiter: RequestHandler })
     const [existing] = await db
       .select({ id: customers.id })
       .from(customers)
-      .where(and(eq(customers.type, 'website'), eq(customers.email, values.email), eq(customers.phone, values.phone), sql`${customers.deletedAt} IS NULL`))
+      .where(and(eq(customers.type, 'website'), values.email ? eq(customers.email, values.email) : isNull(customers.email), eq(customers.phone, values.phone), sql`${customers.deletedAt} IS NULL`))
       .limit(1);
     const customerId = existing?.id ?? crypto.randomUUID();
     if (!existing) steps.push(db.insert(customers).values({ id: customerId, customerNo: WEBSITE_NUMBER(), type: 'website', name: values.name, phone: values.phone, email: values.email }));
@@ -199,14 +233,14 @@ export function publicRouter({ writeLimiter }: { writeLimiter: RequestHandler })
         id,
         customerId,
         reservationId: reservation.id,
-        amountPaise: slot.pricePaise!,
+        amountPaise,
         source: 'website',
         status: 'pending_payment',
         notes: values.notes,
         accessTokenHash: hashToken(token),
         holdExpiresAt: new Date(Date.now() + venue!.holdMinutes * 60_000),
       }),
-      auditEntry({ action: 'booking.held_online', entityType: 'booking', entityId: id, newValues: { amountPaise: slot.pricePaise }, req }),
+      auditEntry({ action: 'booking.held_online', entityType: 'booking', entityId: id, newValues: { amountPaise, durationMinutes: values.durationMinutes }, req }),
     ]);
     res.status(201).json({ token, booking: publicView(await fullByToken(token)) });
   });

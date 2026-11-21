@@ -219,7 +219,7 @@ export default function BookingsTable() {
               changed(`${routed.bookingNo} cancelled.`);
             }}
           >
-            {routed.paidPaise > 0 && <Notice tone="warning">{formatPaise(routed.paidPaise)} has been paid. Refund rules aren’t set yet, so handle any refund yourself; it stays on the booking.</Notice>}
+            {routed.paidPaise > 0 && <Notice tone="warning">{formatPaise(routed.paidPaise)} has been paid. Under the refund policy: 24 hours or more before the start, refund in full; 6–24 hours, refund 50%; under 6 hours, nothing. Refund from the Payments page.</Notice>}
           </ActionDialog>
         )}
         {dialog?.type === 'restore' && (

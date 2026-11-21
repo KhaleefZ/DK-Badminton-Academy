@@ -30,7 +30,7 @@ export function reportsRouter(): Router {
         .innerJoin(courtReservations, eq(bookings.reservationId, courtReservations.id))
         .where(and(eq(bookings.status, 'active'), gte(courtReservations.startsAt, start), lt(courtReservations.startsAt, end), court ? eq(courtReservations.courtId, court) : undefined)),
       db
-        .select({ amountPaise: payments.amountPaise, receivedAt: payments.receivedAt, periodId: payments.periodId })
+        .select({ amountPaise: sql<number>`${payments.amountPaise} - ${payments.refundedPaise}`, receivedAt: payments.receivedAt, periodId: payments.periodId })
         .from(payments)
         .leftJoin(bookings, eq(payments.bookingId, bookings.id))
         .leftJoin(courtReservations, eq(bookings.reservationId, courtReservations.id))

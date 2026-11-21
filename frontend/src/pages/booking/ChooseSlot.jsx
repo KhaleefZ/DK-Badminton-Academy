@@ -1,19 +1,19 @@
+import { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import Button from '../../components/Button';
-import Field from '../../components/Field';
 import Notice from '../../components/Notice';
 import BookingStepper from '../../booking/BookingStepper';
 import BookingSummary from '../../booking/BookingSummary';
 import DateStrip from '../../booking/DateStrip';
 import SlotGrid from '../../booking/SlotGrid';
-import TestModeNotice from '../../booking/TestModeNotice';
 import { useAvailability, useBooking } from '../../booking/BookingContext';
-import { formatPaise, formatShort, slotLabel } from '../../booking/schedule';
+import { durationLabel, formatPaise, formatShort, liveSelection, slotLabel, tapSlot, usable } from '../../booking/schedule';
 import { useContent } from '../../lib/site';
 
 export default function ChooseSlot() {
   const navigate = useNavigate();
   const { date, courtId, slot, setDate, setCourt, setSlot } = useBooking();
+  const [tapNote, setTapNote] = useState('');
   const { data, error } = useAvailability(date);
   const next = () => navigate('/booking/details');
   const text = useContent().booking.choose;
@@ -21,13 +21,23 @@ export default function ChooseSlot() {
   const courts = data?.courts ?? [];
   const court = courts.find((c) => c.id === courtId) ?? courts[0];
   const slots = court?.slots ?? [];
-  const chosen = slot && slots.find((s) => s.start === slot.start && s.available) ? slot : null;
+  // A booking is 1 h or longer, made of back-to-back 30-minute slots.
+  const minCount = (data?.minBookingMinutes ?? 60) / 30;
+  // A free half-hour boxed in by bookings can't make a whole booking, so it shows as unavailable.
+  const shown = slots.map((s, i) => ({ ...s, available: usable(slots, i, minCount) }));
+  // Recomputed from live slots, so the price is current and a time someone else took drops away.
+  const chosen = liveSelection(slots, slot);
+
+  const pick = (_slot, index) => {
+    const { selection, note = '' } = tapSlot(slots, chosen, index, minCount);
+    setSlot(selection);
+    setTapNote(note);
+  };
 
   return (
     <div className="booking-page">
       <div className="container">
         <BookingStepper current={1} />
-        {data?.testMode && <TestModeNotice className="booking-page__notice" />}
         {data && !data.onlineBooking && <Notice className="booking-page__notice">{text.offlineNotice}</Notice>}
 
         <div className="booking-layout">
@@ -40,20 +50,30 @@ export default function ChooseSlot() {
             <DateStrip value={date} onChange={setDate} maxDate={data?.lastOnlineDate} />
 
             {courts.length > 0 && (
-              <Field
-                as="select"
-                label={text.courtLabel}
-                value={court?.id ?? ''}
-                onChange={(e) => setCourt(e.target.value)}
-                options={courts.map((c) => ({ value: c.id, label: c.name }))}
-                className="booking-page__court"
-              />
+              <div className="court-picker">
+                <p className="court-picker__label" id="court-label">
+                  {text.courtLabel}
+                </p>
+                <div className="court-picker__options" role="radiogroup" aria-labelledby="court-label">
+                  {courts.map((c) => {
+                    const selected = c.id === court?.id;
+                    const free = c.slots.filter((s, i) => usable(c.slots, i, minCount)).length;
+                    return (
+                      <button key={c.id} type="button" role="radio" aria-checked={selected} className={`court-option${selected ? ' is-selected' : ''}`} onClick={() => setCourt(c.id)}>
+                        <span className="court-option__name">{c.name}</span>
+                        <span className="court-option__meta">{free === 0 ? 'Fully booked' : `${durationLabel(free * 30)} free`}</span>
+                      </button>
+                    );
+                  })}
+                </div>
+              </div>
             )}
 
             <ul className="slot-legend" aria-label="Slot legend">
-              <li>{text.legendAvailable}</li>
-              <li className="slot-legend__selected">{text.legendSelected}</li>
-              <li>{text.legendUnavailable}</li>
+              <li className="slot-legend__item slot-legend__item--selected">{text.legendSelected}</li>
+              <li className="slot-legend__item slot-legend__item--available">{text.legendAvailable}</li>
+              <li className="slot-legend__item slot-legend__item--blocked">{text.legendBlocked ?? 'Blocked'}</li>
+              <li className="slot-legend__item slot-legend__item--unavailable">{text.legendUnavailable}</li>
             </ul>
 
             {error && (
@@ -63,18 +83,18 @@ export default function ChooseSlot() {
             )}
             {!data && !error && <p className="meta muted">{text.checking}</p>}
             {data && slots.length === 0 && <p className="meta muted">{text.noSlots}</p>}
-            {slots.length > 0 && <SlotGrid slots={slots} value={chosen?.start} onChange={setSlot} />}
-
-            <p className="fine muted">{text.note}</p>
+            {slots.length > 0 && <SlotGrid slots={shown} selection={chosen} onSelect={pick} className="slot-grid--half" />}
+            {slots.length > 0 && (
+              <p className="slot-hint" aria-live="polite">
+                {tapNote || (chosen ? `${durationLabel(chosen.durationMinutes)} selected, ${slotLabel(chosen)}. Tap more half-hours to make it longer, or the first or last one to shorten it.` : '')}
+              </p>
+            )}
           </section>
 
           <aside className="booking-layout__aside stack" style={{ '--stack-gap': '16px' }}>
             <BookingSummary date={date} courtName={court?.name} slot={chosen} amountPaise={chosen?.pricePaise} />
-            <Button onClick={next} disabled={!chosen || !court} className="btn--block-mobile">
+            <Button onClick={next} disabled={!chosen || !court} className="btn--block-mobile btn--full">
               {text.nextButton}
-            </Button>
-            <Button to="/courts" variant="secondary" size="sm">
-              {text.backButton}
             </Button>
           </aside>
         </div>

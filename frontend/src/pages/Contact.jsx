@@ -125,9 +125,6 @@ export default function Contact() {
               </div>
               <h3 className="display display--sm">{text.directionsTitle}</h3>
               <p className="meta">{text.directionsText}</p>
-              <a className="directions-card__link" href={brand.mapsUrl} target="_blank" rel="noreferrer">
-                {brand.mapsLabel}
-              </a>
               <Button href={brand.mapsUrl} variant="lime">
                 {text.directionsButton}
               </Button>

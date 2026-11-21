@@ -30,7 +30,6 @@ export default function Home() {
             </Magnetic>
             <LinkButton link={hero.secondaryButton} variant="secondary" className="hide-mobile" />
           </div>
-          {hero.note && <p className="fine">{hero.note}</p>}
         </div>
         <ConceptImage image={hero.image} className="hero__image" eager reveal="up" parallax={50} overlay={<CourtLines layout="hero" />} />
       </section>
@@ -68,7 +67,6 @@ export default function Home() {
             </h2>
             <p className="body muted">{discovery.text}</p>
             <LinkButton link={discovery.button} variant="secondary" />
-            {discovery.note && <p className="meta muted">{discovery.note}</p>}
           </div>
         </div>
       </section>
@@ -82,7 +80,6 @@ export default function Home() {
             <h2 id="journey-heading" className="display display--md">
               {journey.title}
             </h2>
-            <p className="small muted">{journey.note}</p>
           </div>
           <div className="stage-track">
             <ScrollDrawPath
@@ -104,7 +101,6 @@ export default function Home() {
               ))}
             </ol>
           </div>
-          <LinkButton link={journey.button} />
         </div>
       </section>
     ),
@@ -129,7 +125,6 @@ export default function Home() {
               </StaggerItem>
             ))}
           </Stagger>
-          {plans.note && <p className="meta muted pricing-note">{plans.note}</p>}
           <Stagger className="full-width">
             <StaggerItem className="pricing-banner on-dark">
               <p className="display pricing-banner__title">{plans.bannerTitle}</p>
@@ -177,12 +172,11 @@ export default function Home() {
                 {reviews.title}
               </h2>
             </div>
-            {reviews.note && <p className="small muted reviews-note">{reviews.note}</p>}
           </div>
           <Stagger className="grid-3" stagger={0.08}>
             {shared.reviews.items.map((review, i) => (
               <StaggerItem key={i} className="grid-3__item">
-                <ReviewCard review={review} badge={shared.reviews.showSampleBadge ? shared.reviews.sampleBadge : ''} />
+                <ReviewCard review={review} />
               </StaggerItem>
             ))}
           </Stagger>
@@ -199,7 +193,6 @@ export default function Home() {
             <h2 id="faq-heading" className="display display--lg">
               {faq.title}
             </h2>
-            {faq.note && <p className="small muted">{faq.note}</p>}
           </div>
           <FaqList />
         </div>

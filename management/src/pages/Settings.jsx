@@ -101,7 +101,7 @@ function VenuePanel({ venue, onSaved }) {
           <Field label="Phone" type="tel" value={form.phone} onChange={set('phone')} />
           <Field label="Email" type="email" value={form.email} onChange={set('email')} />
           <Field as="select" label="Slot length" options={SLOT_OPTIONS} value={form.slotMinutes} onChange={set('slotMinutes')} />
-          <Field label="Website: days ahead" type="number" min="0" max="365" hint="How far ahead people can book online." value={form.advanceBookingDays} onChange={set('advanceBookingDays')} />
+          <Field label="Website: booking window (days)" type="number" min="1" max="15" hint="Days people can book online, counting today. 15 is today and the next 14 (the most allowed)." value={form.advanceBookingDays} onChange={set('advanceBookingDays')} />
           <Field label="Website: notice (minutes)" type="number" min="0" hint="The shortest time before a slot starts." value={form.minNoticeMinutes} onChange={set('minNoticeMinutes')} />
           <Field label="Website: hold for payment (minutes)" type="number" min="2" max="60" hint="How long a slot waits while someone pays." value={form.holdMinutes} onChange={set('holdMinutes')} />
           <div className="form-grid__full">

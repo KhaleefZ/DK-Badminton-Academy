@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { useSearchParams } from 'react-router-dom';
 import { AnimatePresence } from 'motion/react';
 import PageHeader from '../layout/PageHeader';
@@ -26,6 +26,26 @@ const KIND_OPTIONS = [
   { value: 'court', label: 'Court (CRT)' },
 ];
 const STATES = ['Active', 'Expiring', 'Expired', 'Held', 'Cancelled', 'Lapsed'];
+
+const DAY_MS = 86_400_000;
+const dayNumber = (iso) => Date.UTC(...iso.split('-').map((n, i) => Number(n) - (i === 1 ? 1 : 0))) / DAY_MS;
+
+/**
+ * How far a membership is from its end date, for people to read: "12 days left", "Ends tomorrow",
+ * "Ended 3 days ago". `tone` drives the colour. The last day itself is still a playing day.
+ */
+export function endCountdown(endsOn, today = venueToday()) {
+  const days = dayNumber(endsOn) - dayNumber(today);
+  const plural = (n) => `${n} day${n === 1 ? '' : 's'}`;
+  if (days > 7) return { days, tone: 'ok', text: `${plural(days)} left` };
+  if (days > 1) return { days, tone: 'soon', text: `Ends in ${plural(days)}` };
+  if (days === 1) return { days, tone: 'soon', text: 'Ends tomorrow' };
+  if (days === 0) return { days, tone: 'soon', text: 'Last day today' };
+  return { days, tone: 'ended', text: `Ended ${plural(-days)} ago` };
+}
+
+/** Renewal is the next step from a week before the end date onwards. */
+const needsRenewal = (m) => m.status === 'active' && endCountdown(m.endsOn).days <= 7;
 const METHODS = ['cash', 'upi'].map((value) => ({ value, label: PAYMENT_LABELS[value] }));
 
 function CourtTimeFields({ form, set, days, setDays, courts, courtIds, setCourtIds }) {
@@ -216,12 +236,41 @@ function Detail({ data, onAction }) {
   const manage = can('memberships.manage');
   const live = m.status === 'active';
   const unpaid = periods.filter((p) => p.duePaise > 0);
+  const end = endCountdown(m.endsOn);
+  // Reminders go out on WhatsApp from the academy's phone: the message is typed, staff press send.
+  const canRemind = live && m.whatsappReminderUrl && can('messages.manage');
   return (
     <Panel className="detail-panel">
       <div className="detail-panel__head">
         <h2 className="detail-panel__id">{m.membershipNo}</h2>
         <StatusBadge status={m.state} />
       </div>
+      {live && (
+        <div className={`membership-end membership-end--${end.tone}`}>
+          <p className="membership-end__label">Valid until</p>
+          <p className="membership-end__date">{formatDate(m.endsOn)}</p>
+          <p className="membership-end__countdown">{end.text}</p>
+          {(needsRenewal(m) || (unpaid.length > 0 && can('payments.record'))) && (
+            <div className="membership-end__actions">
+              {needsRenewal(m) && manage && (
+                <Button variant="primary" size="sm" onClick={() => onAction({ type: 'renew' })}>
+                  Renew one month
+                </Button>
+              )}
+              {needsRenewal(m) && canRemind && (
+                <Button size="sm" href={m.whatsappReminderUrl} onClick={() => onAction({ type: 'whatsapp' })}>
+                  WhatsApp reminder
+                </Button>
+              )}
+              {unpaid.length > 0 && can('payments.record') && (
+                <Button size="sm" onClick={() => onAction({ type: 'pay', period: unpaid[0] })}>
+                  Record {formatPaise(unpaid[0].duePaise)} due
+                </Button>
+              )}
+            </div>
+          )}
+        </div>
+      )}
       <hr className="rule" />
       <p className="detail-panel__name">{m.holderName}</p>
       <p className="detail-panel__lines">
@@ -238,7 +287,7 @@ function Detail({ data, onAction }) {
         {m.batchName ? `${m.batchName} · ` : `${m.courts.map((c) => c.name).join(', ')} · `}
         {formatDays(m.schedule.days)} · {m.schedule.start}–{m.schedule.end}
         <br />
-        Valid {formatDate(m.startsOn)} to {formatDate(m.endsOn)}
+        Member since {formatDate(m.startsOn)} · valid until {formatDate(m.endsOn)}
         <br />
         {formatPaise(m.pricePaise)} a month · {formatPaise(m.duePaise)} due
       </p>
@@ -352,12 +401,12 @@ function Detail({ data, onAction }) {
       )}
       {unpaid.length > 0 && !live && <Notice tone="warning">{formatPaise(m.duePaise)} was still owed when this ended.</Notice>}
       <div className="detail-panel__actions">
-        {live && manage && (
-          <Button variant="primary" onClick={() => onAction({ type: 'renew' })}>
-            Renew one month
+        {live && manage && !needsRenewal(m) && <Button onClick={() => onAction({ type: 'renew' })}>Renew early</Button>}
+        {canRemind && !needsRenewal(m) && (
+          <Button href={m.whatsappReminderUrl} onClick={() => onAction({ type: 'whatsapp' })}>
+            WhatsApp reminder
           </Button>
         )}
-        {live && m.email && can('messages.manage') && <Button onClick={() => onAction({ type: 'remind' })}>Send renewal reminder</Button>}
         {manage && m.status !== 'cancelled' && m.status !== 'expired' && <Button onClick={() => onAction({ type: 'edit' })}>Edit details</Button>}
         {live && manage && <Button onClick={() => onAction({ type: 'move' })}>{m.kind === 'court' ? 'Change time' : 'Change batch'}</Button>}
         {manage && (live || m.status === 'pending_payment') && <Button onClick={() => onAction({ type: 'cancel' })}>Cancel membership</Button>}
@@ -397,6 +446,19 @@ export default function Memberships() {
   const count = (s) => all.filter((m) => m.state === s).length;
 
   const select = (id) => setParams({ selected: id }, { replace: true });
+  // A quick action from a list row: open that member, then the action once their details have loaded.
+  const [pending, setPending] = useState(null);
+  useEffect(() => {
+    if (pending && shown?.membership.id === pending.id) {
+      setPending(null);
+      onAction(pending.action);
+    }
+  });
+  const quick = (event, m, action) => {
+    event.stopPropagation();
+    select(m.id);
+    setPending({ id: m.id, action });
+  };
   const close = () => setDialog(null);
   const changed = (message) => {
     close();
@@ -405,16 +467,13 @@ export default function Memberships() {
     batchesRes.reload();
     notify(message);
   };
+  /** The WhatsApp chat opens in a new tab (the link does that); this only records it in Messages. */
+  const logWhatsapp = (id) =>
+    api(`/memberships/${id}/whatsapp-opened`, { method: 'POST' })
+      .then(() => notify('WhatsApp opened with the reminder. Press send there.'))
+      .catch((err) => notify(err.message));
   const onAction = async (action) => {
-    if (action.type === 'remind') {
-      try {
-        await api(`/memberships/${selected.id}/remind`, { method: 'POST' });
-        notify('Reminder email queued.');
-      } catch (err) {
-        notify(err.message);
-      }
-      return;
-    }
+    if (action.type === 'whatsapp') return logWhatsapp(selected.id);
     setDialog(action);
   };
 
@@ -464,6 +523,9 @@ export default function Memberships() {
                       <th>Fixed time · IST</th>
                       <th>Valid until</th>
                       <th>Status</th>
+                      <th>
+                        <span className="visually-hidden">Next step</span>
+                      </th>
                     </tr>
                   </thead>
                   <tbody>
@@ -483,12 +545,36 @@ export default function Memberships() {
                             {formatDays(m.schedule.days)} · {m.batchName ?? m.courts.map((c) => c.name).join(', ')}
                           </span>
                         </td>
-                        <td>{formatDate(m.endsOn)}</td>
+                        <td>
+                          {formatDate(m.endsOn)}
+                          {m.status === 'active' && <span className={`data-table__sub end-countdown end-countdown--${endCountdown(m.endsOn).tone}`}>{endCountdown(m.endsOn).text}</span>}
+                        </td>
                         <td>
                           <span className="staff-status">
                             <StatusBadge status={m.state} />
                             {m.duePaise > 0 && m.status === 'active' && <StatusBadge status="Due">{formatPaise(m.duePaise)} due</StatusBadge>}
                           </span>
+                        </td>
+                        <td className="data-table__actions">
+                          {needsRenewal(m) && can('memberships.manage') && (
+                            <button type="button" className="link-button small" onClick={(e) => quick(e, m, { type: 'renew' })}>
+                              Renew
+                            </button>
+                          )}
+                          {needsRenewal(m) && m.whatsappReminderUrl && can('messages.manage') && (
+                            <a
+                              href={m.whatsappReminderUrl}
+                              target="_blank"
+                              rel="noreferrer"
+                              className="link-button small"
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                logWhatsapp(m.id);
+                              }}
+                            >
+                              WhatsApp
+                            </a>
+                          )}
                         </td>
                       </tr>
                     ))}
@@ -560,7 +646,7 @@ export default function Memberships() {
           <ActionDialog
             key="cancel"
             title={`Cancel ${selected.membershipNo}?`}
-            description="Future court time is freed. Refund rules aren’t set yet, so handle any refund yourself."
+            description="Future court time is freed. Under the cancellation and refund policy, a month that has already started isn’t refunded; a paid month that hasn’t started is refunded in full. Handle any refund from the Payments page."
             label="Cancel membership"
             reasonLabel="Reason (optional)"
             onClose={close}

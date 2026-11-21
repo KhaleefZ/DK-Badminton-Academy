@@ -69,7 +69,7 @@ describe('who can call what', () => {
 describe('public availability', () => {
   it('shows free slots with a price', async () => {
     const [slot] = await slots();
-    expect(slot).toEqual({ start: '06:00', end: '07:00', pricePaise: 50000, available: true });
+    expect(slot).toEqual({ start: '06:00', end: '06:30', pricePaise: 25000, available: true, status: 'available' });
   });
 
   it('never says why a slot is taken', async () => {
@@ -81,6 +81,9 @@ describe('public availability', () => {
 
   it('marks slots outside the booking window, or without a price, unavailable', async () => {
     expect((await slots(addDays(venueToday(), 30)))[0].available).toBe(false);
+    // 15 days in all: today and the next 14.
+    expect((await slots(addDays(venueToday(), 14)))[0].available).toBe(true);
+    expect((await slots(addDays(venueToday(), 15)))[0]).toMatchObject({ available: false, status: 'unavailable' });
     await admin('put', '/settings/prices').send({ rules: [] }).expect(200);
     expect((await slots())[0].available).toBe(false);
   });
@@ -127,7 +130,7 @@ describe('holding a slot', () => {
     await hold({ start: '07:00' }).expect(201);
     const res = await hold({ start: '08:00' }).expect(409);
     expect(res.body.error.code).toBe('TOO_MANY_HOLDS');
-    expect((await slots())[2].available).toBe(true);
+    expect((await slots()).find((s: { start: string }) => s.start === '08:00').available).toBe(true);
   });
 
   it.each([[{ name: ' ' }], [{ phone: '12345' }], [{ email: 'nope' }], [{ date: '2026-02-30' }], [{ courtId: 'x' }], [{ website: 'http://spam' }]])('refuses %j', async (over) => {
@@ -135,7 +138,7 @@ describe('holding a slot', () => {
   });
 
   it('refuses a slot that doesn’t exist or can’t be booked online', async () => {
-    await hold({ start: '06:30' }).expect(409);
+    await hold({ start: '06:15' }).expect(409);
     await hold({ start: '05:00' }).expect(409);
     await hold({ date: addDays(venueToday(), 30) }).expect(409);
     await hold({ courtId: crypto.randomUUID() }).expect(409);
@@ -258,6 +261,84 @@ describe('in the admin panel', () => {
     const minutes = (new Date(body.booking.holdExpiresAt).getTime() - Date.now()) / 60_000;
     expect(minutes).toBeGreaterThan(14);
     expect(minutes).toBeLessThanOrEqual(15);
+  });
+});
+
+describe('slot status', () => {
+  it('shows venue blocks as blocked, and bookings and member times as unavailable', async () => {
+    await createReservation({ courtId: court1, kind: 'staff_block', startsAt: instantAt(FUTURE, 360), endsAt: instantAt(FUTURE, 390) });
+    await createReservation({ courtId: court1, kind: 'member_block', startsAt: instantAt(FUTURE, 390), endsAt: instantAt(FUTURE, 420) });
+    await hold({ start: '07:00' }).expect(201);
+    await admin('post', '/settings/closures').send({ courtId: court1, startsAt: instantAt(FUTURE, 480).toISOString(), endsAt: instantAt(FUTURE, 510).toISOString() }).expect(201);
+    const byStart = Object.fromEntries((await slots()).map((s: { start: string; status: string }) => [s.start, s.status]));
+    expect(byStart).toMatchObject({ '06:00': 'blocked', '06:30': 'unavailable', '07:00': 'unavailable', '07:30': 'unavailable', '08:00': 'blocked', '08:30': 'available' });
+  });
+
+  it('refuses to book over a blocked half-hour', async () => {
+    await createReservation({ courtId: court1, kind: 'staff_block', startsAt: instantAt(FUTURE, 390), endsAt: instantAt(FUTURE, 420) });
+    expect((await hold({ start: '06:00' }).expect(409)).body.error.code).toBe('SLOT_TAKEN');
+  });
+});
+
+describe('optional email', () => {
+  it('books with a name and phone only, and keeps them apart from people who gave an email', async () => {
+    const res = await hold({ email: '' }).expect(201);
+    expect(res.body.booking).toMatchObject({ start: '06:00', end: '07:00' });
+    await hold({ start: '07:00', email: undefined }).expect(201);
+    await hold({ start: '08:00' }).expect(201);
+    const rows = await db.select().from(customers);
+    expect(rows.map((c) => c.email).sort()).toEqual(['asha@example.com', null]);
+    await hold({ start: '09:00', email: 'not-an-email' }).expect(400);
+  });
+});
+
+describe('details validation', () => {
+  it('checks the name, and keeps names in other scripts', async () => {
+    for (const [value, message] of [['A', 'at least 2'], ['x'.repeat(121), '120 characters'], ['Asha 123', 'letters only']]) {
+      const res = await hold({ name: value }).expect(400);
+      expect(res.body.error.message).toContain(message);
+    }
+    await hold({ name: 'ஆஷா ராமன்' }).expect(201);
+    await hold({ start: '07:00', name: "D'Souza-Rao S." }).expect(201);
+  });
+
+  it('limits notes to 1,000 characters and checks the phone and email', async () => {
+    expect((await hold({ notes: 'x'.repeat(1001) }).expect(400)).body.error.message).toContain('1,000');
+    await hold({ phone: '12345 67890' }).expect(400);
+    await hold({ email: 'asha@' }).expect(400);
+    await hold({ notes: 'x'.repeat(1000) }).expect(201);
+  });
+});
+
+describe('30-minute slots', () => {
+  const at = async (start: string) => (await slots()).find((s: { start: string }) => s.start === start);
+
+  it('holds 1 h by default and longer on request, priced by the minute', async () => {
+    const hour = await hold().expect(201);
+    expect(hour.body.booking).toMatchObject({ start: '06:00', end: '07:00', amountPaise: 50000 });
+    const longer = await hold({ start: '07:30', durationMinutes: 90 }).expect(201);
+    expect(longer.body.booking).toMatchObject({ start: '07:30', end: '09:00', amountPaise: 75000 });
+    expect((await at('08:30')).available).toBe(false);
+    expect((await at('07:00')).available).toBe(true);
+  });
+
+  it('takes any run of half-hours from 1 h, but nothing shorter or off the half-hour', async () => {
+    for (const durationMinutes of [30, 45, 75]) await hold({ durationMinutes }).expect(400);
+    const res = await hold({ start: '06:30', durationMinutes: 180 }).expect(201);
+    expect(res.body.booking).toMatchObject({ start: '06:30', end: '09:30', amountPaise: 150000 });
+  });
+
+  it('refuses when any half-hour in the booking is taken, or it runs past closing', async () => {
+    await hold({ start: '07:00' }).expect(201);
+    expect((await hold({ start: '06:00', durationMinutes: 90 }).expect(409)).body.error.code).toBe('SLOT_TAKEN');
+    expect((await hold({ start: '06:30' }).expect(409)).body.error.code).toBe('SLOT_TAKEN');
+    await hold({ start: '06:00' }).expect(201);
+    expect((await hold({ start: '09:30' }).expect(409)).body.error.code).toBe('SLOT_TAKEN');
+  });
+
+  it('leaves the staff schedule on the venue’s slot length', async () => {
+    const { body } = await admin('get', `/schedule?date=${FUTURE}`).expect(200);
+    expect(JSON.stringify(body)).toContain('"start":"06:00","end":"07:00"');
   });
 });
 

@@ -4,7 +4,7 @@ import { and, asc, desc, eq, inArray, isNull, max, sql } from 'drizzle-orm';
 import { z } from 'zod';
 import { hashToken } from '../auth/crypto.js';
 import { db, DB_ERRORS, dbErrorCode, Work } from '../db/client.js';
-import { referralCodes, courts, memberBatches, memberCredits, memberships, membershipCourts, membershipKind, membershipPeriods, membershipPlans, membershipPlayers, nextNumber, paymentMethod, payments } from '../db/schema.js';
+import { messages, referralCodes, courts, memberBatches, memberCredits, memberships, membershipCourts, membershipKind, membershipPeriods, membershipPlans, membershipPlayers, nextNumber, paymentMethod, payments } from '../db/schema.js';
 import { auditEntry } from '../lib/audit.js';
 import { AppError, invalid, notFound } from '../lib/errors.js';
 import { likeTerm, ilike } from '../lib/search.js';
@@ -12,7 +12,7 @@ import { addDays, isDate, monthEnd, toMinutes, toTime, venueToday } from '../lib
 import { parseBody, UUID } from '../lib/validate.js';
 import { applyCredit, claimReferral, creditBalance, ensureMemberCode, recordRedemption, settleReferral } from '../memberships/referrals.js';
 import { addPeriod, courtIdsOf, holdWeeklyTime, nextPeriod, periodPaid, releaseFutureBlocks, seatsTaken, startCourtBlocks, takeBatchSeat } from '../memberships/service.js';
-import { membershipToken } from '../messages/links.js';
+import { membershipReminderWhatsappUrl, membershipToken } from '../messages/links.js';
 import { enqueueMembershipMessage } from '../messages/queue.js';
 import { currentAuth, requirePasswordCurrent, requirePermission, requireSession } from '../middleware/auth.js';
 import { releaseExpiredHolds } from '../schedule/availability.js';
@@ -108,7 +108,7 @@ export async function batchViews(where?: ReturnType<typeof eq>) {
 }
 
 const dueSql = sql<number>`coalesce((
-  SELECT sum(max(pe.amount_paise - coalesce((SELECT sum(pa.amount_paise) FROM payments pa WHERE pa.period_id = pe.id AND pa.voided_at IS NULL), 0), 0))
+  SELECT sum(max(pe.amount_paise - coalesce((SELECT sum(pa.amount_paise - pa.refunded_paise) FROM payments pa WHERE pa.period_id = pe.id AND pa.voided_at IS NULL), 0), 0))
   FROM membership_periods pe WHERE pe.membership_id = memberships.id
 ), 0)`;
 
@@ -143,6 +143,7 @@ async function membershipViews(where: ReturnType<typeof and>) {
       batchName: batch?.name ?? null,
       duePaise,
       state: stateOf(m, today),
+      whatsappReminderUrl: membershipReminderWhatsappUrl({ ...m, planName }, today),
       daysLeft: Math.round((Date.parse(m.endsOn) - Date.parse(today)) / 86_400_000),
       schedule: { days: time.days ?? [], ...batchTime({ startMinute: time.startMinute ?? 0, endMinute: time.endMinute ?? 0 }) },
       courts: batch ? [] : courtRows.filter((c) => c.membershipId === m.id).map(({ id, name }) => ({ id, name })),
@@ -465,6 +466,24 @@ export function membershipsRouter(): Router {
     const queued = await enqueueMembershipMessage(id, 'reminder', actor(req));
     if (!queued) throw invalid('This member has no email address.', 'NO_EMAIL');
     res.status(202).json({ queued: true });
+  });
+
+  /** Staff opened the WhatsApp reminder; logged with the member's messages, like an email would be. */
+  router.post('/:id/whatsapp-opened', requirePermission('messages.manage'), async (req, res) => {
+    const id = paramId(req, 'That membership');
+    const m = await findMembership(id);
+    await db.insert(messages).values({
+      channel: 'whatsapp',
+      template: 'membership_whatsapp',
+      recipient: m.phone,
+      subject: `WhatsApp renewal reminder · ${m.membershipNo}`,
+      body: 'Opened in WhatsApp by staff.',
+      status: 'sent',
+      sentAt: new Date(),
+      membershipId: id,
+      createdBy: actor(req),
+    });
+    res.status(204).end();
   });
 
   router.post('/:id/payments', requirePermission('payments.record'), async (req, res) => {

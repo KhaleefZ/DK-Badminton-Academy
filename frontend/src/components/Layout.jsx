@@ -15,14 +15,15 @@ function pageTitle(pathname, seo, customPages) {
 }
 
 export default function Layout() {
-  const { pathname } = useLocation();
+  const { pathname, hash } = useLocation();
   const { seo, customPages } = useContent();
 
   useEffect(() => {
-    window.scrollTo({ top: 0, behavior: 'instant' });
+    // A link to a section (/pricing#join) is scrolled by that page once its content is in place.
+    if (!hash) window.scrollTo({ top: 0, behavior: 'instant' });
     document.title = [pageTitle(pathname, seo, customPages), seo.siteSuffix].filter(Boolean).join(' · ');
     document.querySelector('meta[name="description"]')?.setAttribute('content', seo.description);
-  }, [pathname, seo, customPages]);
+  }, [pathname, hash, seo, customPages]);
 
   return (
     <>

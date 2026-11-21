@@ -6,11 +6,11 @@ import Notice from '../../components/Notice';
 import BookingStepper from '../../booking/BookingStepper';
 import BookingSummary from '../../booking/BookingSummary';
 import { useAvailability, useBooking } from '../../booking/BookingContext';
-import { validateDetails } from '../../booking/validation';
+import { liveSelection } from '../../booking/schedule';
+import { DETAIL_LIMITS, validateDetails } from '../../booking/validation';
 import { api } from '../../lib/api';
 import { flagFirstInvalid } from '../../lib/formFeedback';
 import { fill, useContent } from '../../lib/site';
-import TestModeNotice from '../../booking/TestModeNotice';
 
 export default function Details() {
   const navigate = useNavigate();
@@ -26,6 +26,8 @@ export default function Details() {
   if (!slot) return <Navigate to="/booking" replace />;
 
   const court = data?.courts.find((c) => c.id === courtId) ?? data?.courts[0];
+  // Prefer the live slot, so the summary shows today's price; the server sets the real one either way.
+  const booked = (court && liveSelection(court.slots, slot)) ?? slot;
   const errors = validateDetails(details);
   const ready = Object.keys(errors).length === 0 && agreed;
   const show = (field) => (touched[field] ? errors[field] : undefined);
@@ -37,7 +39,7 @@ export default function Details() {
 
   const submit = async (e) => {
     e.preventDefault();
-    setTouched({ name: true, phone: true, email: true });
+    setTouched({ name: true, phone: true, email: true, notes: true });
     if (!ready) {
       flagFirstInvalid(e.currentTarget, '.ack-box input:not(:checked)');
       return;
@@ -46,7 +48,7 @@ export default function Details() {
     setPending(true);
     setError(null);
     try {
-      const { token } = await api('/bookings', { method: 'POST', body: { courtId: court.id, date, start: slot.start, ...details, website: trap } });
+      const { token } = await api('/bookings', { method: 'POST', body: { courtId: court.id, date, start: slot.start, durationMinutes: slot.durationMinutes, ...details, website: trap } });
       navigate(`/booking/pay/${token}`);
     } catch (err) {
       setError(err);
@@ -58,7 +60,6 @@ export default function Details() {
     <div className="booking-page">
       <div className="container">
         <BookingStepper current={2} />
-        {data?.testMode && <TestModeNotice className="booking-page__notice" />}
 
         <form className="booking-layout" onSubmit={submit} noValidate>
           <section className="stack booking-layout__main" aria-labelledby="details-heading">
@@ -68,10 +69,17 @@ export default function Details() {
             </h1>
 
             <div className="form-grid">
-              <Field label={text.nameLabel} required autoComplete="name" hint={text.nameHint} error={show('name')} {...bind('name')} />
-              <Field label={text.phoneLabel} required type="tel" inputMode="tel" autoComplete="tel" error={show('phone')} {...bind('phone')} />
-              <Field label={text.emailLabel} required type="email" autoComplete="email" hint={text.emailHint} error={show('email')} className="form-grid__full" {...bind('email')} />
-              <Field label={text.notesLabel} maxLength={1000} className="form-grid__full" {...bind('notes')} />
+              <Field label={text.nameLabel} required autoComplete="name" maxLength={DETAIL_LIMITS.name} hint={text.nameHint} error={show('name')} {...bind('name')} />
+              <Field label={text.phoneLabel} required type="tel" inputMode="tel" autoComplete="tel" maxLength={16} placeholder="98765 43210" error={show('phone')} {...bind('phone')} />
+              <Field label={text.emailLabel} type="email" inputMode="email" autoComplete="email" maxLength={DETAIL_LIMITS.email} hint={text.emailHint} error={show('email')} className="form-grid__full" {...bind('email')} />
+              <Field
+                label={text.notesLabel}
+                maxLength={DETAIL_LIMITS.notes}
+                hint={details.notes ? `${details.notes.length.toLocaleString('en-IN')} / ${DETAIL_LIMITS.notes.toLocaleString('en-IN')} characters` : undefined}
+                error={show('notes')}
+                className="form-grid__full"
+                {...bind('notes')}
+              />
             </div>
 
             <div className="visually-hidden" aria-hidden="true">
@@ -90,14 +98,10 @@ export default function Details() {
             </fieldset>
 
             <p className="fine muted">{text.policyNote}</p>
-
-            <Button to="/booking" variant="secondary" size="sm">
-              {text.backButton}
-            </Button>
           </section>
 
           <aside className="booking-layout__aside stack" style={{ '--stack-gap': '16px' }}>
-            <BookingSummary date={date} courtName={court?.name} slot={slot} amountPaise={slot.pricePaise} />
+            <BookingSummary date={date} courtName={court?.name} slot={booked} amountPaise={booked.pricePaise} />
             {error && (
               <div role="alert">
                 <Notice>
@@ -105,7 +109,10 @@ export default function Details() {
                 </Notice>
               </div>
             )}
-            <Button type="submit" variant={ready ? 'primary' : 'muted'} icon={false} aria-disabled={!ready} disabled={pending} aria-busy={pending}>
+            <Button to="/booking" variant="secondary" size="sm" className="btn--full">
+              {text.backButton}
+            </Button>
+            <Button type="submit" variant={ready ? 'primary' : 'muted'} icon={false} aria-disabled={!ready} disabled={pending} aria-busy={pending} className="btn--full">
               {pending ? text.submittingButton : text.submitButton}
             </Button>
             {!ready && <p className="fine muted">{text.incompleteNote}</p>}

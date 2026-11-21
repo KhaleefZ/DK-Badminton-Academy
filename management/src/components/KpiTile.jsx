@@ -148,7 +148,7 @@ export default function KpiTile({
 
 export function KpiRow({ children, columns }) {
   return (
-    <div className="kpi-row" style={columns ? { '--kpi-columns': columns } : undefined}>
+    <div className="kpi-row" data-columns={columns} style={columns ? { '--kpi-columns': columns } : undefined}>
       {children}
     </div>
   );

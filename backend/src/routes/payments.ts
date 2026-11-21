@@ -13,7 +13,11 @@ import { buildGateway, GatewayError, savedGatewayKeys } from '../payments/gatewa
 import { refundPayment } from '../payments/settle.js';
 
 const voidBody = z.object({ reason: z.string({ error: 'Enter why this receipt is being voided.' }).trim().min(1, 'Enter why this receipt is being voided.').max(300) });
-const refundBody = z.object({ reason: z.string({ error: 'Enter why this payment is being refunded.' }).trim().min(1, 'Enter why this payment is being refunded.').max(300) });
+const refundBody = z.object({
+  reason: z.string({ error: 'Enter why this payment is being refunded.' }).trim().min(1, 'Enter why this payment is being refunded.').max(300),
+  // Leave out for a full refund (or whatever is left of it).
+  amountPaise: z.number({ error: 'Enter the amount to refund.' }).int('Enter a valid amount.').positive('Enter an amount above ₹0.').optional(),
+});
 
 export function paymentsRouter(): Router {
   const router = Router();
@@ -75,13 +79,13 @@ export function paymentsRouter(): Router {
   router.post('/:id/refund', requirePermission('payments.void'), async (req, res) => {
     const id = String(req.params.id);
     if (!UUID.test(id)) throw notFound('That receipt');
-    const { reason } = parseBody(refundBody, req.body);
+    const { reason, amountPaise } = parseBody(refundBody, req.body);
     const [receipt] = await db.select().from(payments).where(eq(payments.id, id));
     if (!receipt) throw notFound('That receipt');
     const keys = await savedGatewayKeys();
     if (!keys) throw invalid('No payment gateway is set up, so this can’t be refunded here. Refund it from the gateway dashboard.', 'NO_GATEWAY');
     try {
-      res.json({ payment: await refundPayment(buildGateway(keys), receipt, reason, currentAuth(req).staff.id) });
+      res.json({ payment: await refundPayment(buildGateway(keys), receipt, reason, currentAuth(req).staff.id, amountPaise) });
     } catch (err) {
       if (err instanceof GatewayError) throw new AppError(409, 'REFUND_FAILED', err.message);
       throw err;

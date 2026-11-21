@@ -6,7 +6,10 @@ import { isTestMoney, onlinePayments } from '../payments/gateway.js';
 import { instantAt, periodView, venueToday } from '../lib/time.js';
 import { bookingLink, membershipLink } from './links.js';
 
-const BATCH_SIZE = 10;
+// Emails sent per run. Each one opens its own encrypted connection to Gmail, which costs CPU, and
+// Cloudflare's free plan allows about 10 ms of CPU per run. Runs alternate with payment checks, so this
+// is 3 emails every 2 minutes: over 2,000 a day, more than Gmail itself allows.
+export const EMAIL_BATCH_SIZE = 3;
 const MAX_ATTEMPTS = 5;
 // How long to wait after the 1st, 2nd, 3rd and 4th failure.
 const RETRY_MINUTES = [1, 5, 15, 60];
@@ -207,7 +210,7 @@ export async function processMessages(mailer: Mailer, now = new Date()): Promise
     .select({ today: sql<number>`count(*)` })
     .from(messages)
     .where(and(eq(messages.channel, 'email'), eq(messages.status, 'sent'), gte(messages.sentAt, instantAt(venueToday(now), 0))))) as [{ today: number }];
-  const room = Math.min(BATCH_SIZE, settings.dailyEmailLimit - today);
+  const room = Math.min(EMAIL_BATCH_SIZE, settings.dailyEmailLimit - today);
   if (room <= 0) return { sent: 0, failed: 0 };
 
   // Claimed in one statement, so two runs at once can't both take the same message.

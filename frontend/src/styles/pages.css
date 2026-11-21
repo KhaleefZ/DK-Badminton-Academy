@@ -326,6 +326,17 @@
   color: var(--background-marketing);
 }
 
+/* Courts page booking call to action: the dark card, wider and roomier, with the button as the one action */
+.booking-cta {
+  --stack-gap: 20px;
+  align-items: flex-start;
+  padding: clamp(32px, 6vw, 72px);
+}
+
+.booking-cta .body {
+  max-width: 52ch;
+}
+
 /* ---------- Pricing table ---------- */
 .table-scroll {
   overflow-x: auto;
@@ -508,6 +519,78 @@
   width: 100%;
 }
 
+/* Court picker: one button per court, replacing the dropdown */
+.court-picker {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-8);
+  width: 100%;
+}
+
+.court-picker__label {
+  margin: 0;
+  font-size: 13px;
+  font-weight: 600;
+}
+
+.court-picker__options {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(140px, 1fr));
+  gap: var(--space-8);
+}
+
+.court-option {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 2px;
+  padding: 10px 14px;
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-4);
+  background: var(--surface-default);
+  color: var(--text-primary);
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+  transition: border-color 0.15s var(--ease-out), background-color 0.15s var(--ease-out);
+}
+
+.court-option:hover {
+  border-color: var(--action-primary);
+}
+
+.court-option:focus-visible {
+  outline: 2px solid var(--action-primary);
+  outline-offset: 2px;
+}
+
+.court-option.is-selected {
+  background: var(--action-primary);
+  border-color: var(--action-primary);
+  color: var(--surface-default);
+}
+
+.court-option__name {
+  font-size: 14px;
+  font-weight: 600;
+}
+
+.court-option__meta {
+  font-size: 11px;
+  color: var(--text-secondary);
+}
+
+.court-option.is-selected .court-option__meta {
+  color: var(--surface-default);
+  opacity: 0.85;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .court-option {
+    transition: none;
+  }
+}
+
 @media (min-width: 900px) {
   .booking-layout__aside {
     position: sticky;
@@ -534,6 +617,25 @@
 
 .summary-card__lines {
   font-size: 12px;
+}
+
+/* Total hours booked: highlighted so it stands apart from the other lines */
+.summary-card__hours {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: var(--space-12);
+  padding: 10px 12px;
+  border-radius: var(--radius-4);
+  background: var(--accent-rally);
+  color: var(--text-primary);
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.summary-card__hours-value {
+  font-size: 16px;
+  font-variant-numeric: tabular-nums;
 }
 
 .summary-card__price {
@@ -638,8 +740,39 @@
   color: var(--action-primary);
 }
 
-.slot-legend__selected {
+.slot-legend__item {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
+/* A swatch drawn like the slot it stands for */
+.slot-legend__item::before {
+  content: '';
+  width: 12px;
+  height: 12px;
+  border-radius: 2px;
+  border: 1px solid var(--border-subtle);
+  background: var(--surface-default);
+}
+
+.slot-legend__item--selected {
   background: var(--accent-rally);
+}
+
+.slot-legend__item--selected::before {
+  background: var(--action-primary);
+  border-color: var(--action-primary);
+}
+
+.slot-legend__item--blocked::before {
+  border-color: transparent;
+  background: repeating-linear-gradient(135deg, var(--status-danger-bg) 0 3px, var(--surface-unavailable) 3px 6px);
+}
+
+.slot-legend__item--unavailable::before {
+  border-color: transparent;
+  background: var(--surface-unavailable);
 }
 
 .slot-grid {
@@ -657,6 +790,17 @@
 
 .slot-grid--row {
   grid-template-columns: repeat(3, 1fr);
+}
+
+/* Booking page: 30-minute slots, so more of them per row */
+.slot-grid--half {
+  grid-template-columns: repeat(auto-fill, minmax(148px, 1fr));
+}
+
+.slot-hint {
+  margin: 0;
+  font-size: 13px;
+  color: var(--text-secondary);
 }
 
 .slot {
@@ -713,6 +857,22 @@
 
 .slot--unavailable .slot__time {
   font-weight: 500;
+}
+
+/* Blocked by the venue (maintenance, events): striped so it reads apart from simply unavailable */
+.slot--blocked {
+  background: repeating-linear-gradient(135deg, var(--status-danger-bg) 0 6px, var(--surface-unavailable) 6px 12px);
+  border-color: transparent;
+  cursor: not-allowed;
+}
+
+.slot--blocked .slot__time {
+  font-weight: 500;
+}
+
+.slot--blocked .slot__state {
+  color: var(--status-danger);
+  font-weight: 600;
 }
 
 /* Mobile sticky summary for step 1 */
@@ -1037,4 +1197,141 @@
 .custom-page__text {
   max-width: 72ch;
   white-space: pre-line;
+}
+
+/* ---------- Pricing & memberships: plan cards and the join form on one page ---------- */
+
+/* Jumping to #plans or #join leaves room for the sticky header. */
+.pricing-anchor {
+  scroll-margin-top: 88px;
+}
+
+.plan-card {
+  transition:
+    transform 260ms var(--ease-out),
+    box-shadow 260ms var(--ease-out),
+    border-color 200ms var(--ease-out);
+}
+
+.plan-card.is-selected {
+  border-color: var(--action-primary);
+  box-shadow: inset 0 0 0 1px var(--action-primary);
+}
+
+/* Lift only for a real mouse or trackpad; touch screens would leave a card stuck "hovered". */
+@media (hover: hover) and (pointer: fine) {
+  .plan-card:hover {
+    transform: translateY(-4px);
+    box-shadow: 0 14px 30px rgb(16 43 37 / 9%);
+  }
+
+  .plan-card.is-selected:hover {
+    box-shadow:
+      inset 0 0 0 1px var(--action-primary),
+      0 14px 30px rgb(16 43 37 / 9%);
+  }
+}
+
+/* The section is a column that shrinks children to fit; these rows span its full width. */
+.join-section__head,
+.join-closed,
+.join-panel {
+  width: 100%;
+}
+
+.join-section__head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-end;
+  justify-content: space-between;
+  gap: var(--space-16);
+}
+
+.join-section__head > .stack {
+  flex: 1 1 420px;
+}
+
+.join-section__head h2:focus {
+  outline: none;
+}
+
+.join-section__head h2:focus-visible {
+  outline: 2px solid var(--action-primary);
+  outline-offset: 4px;
+}
+
+/* The closed state: a short invitation instead of a long form. */
+.join-closed {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-16) var(--space-24);
+  padding: var(--space-24);
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-8);
+  background: var(--surface-tint);
+}
+
+.join-closed p {
+  flex: 1 1 320px;
+  margin: 0;
+  max-width: 60ch;
+}
+
+/* Opening and closing animate height, so the content is clipped while it moves; the padding keeps focus rings visible. */
+.join-panel,
+.join-step {
+  overflow: hidden;
+}
+
+.join-panel__inner,
+.join-step__inner {
+  padding: 3px;
+}
+
+.join-form {
+  max-width: 880px;
+}
+
+/* Choices stretch to fill the form rather than leaving an empty column beside two plans. */
+.join-form .membership-options {
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 300px), 1fr));
+}
+
+.join-form > .notice,
+.join-form .join-step {
+  width: 100%;
+}
+
+/* The header is 68px tall below 1024px. */
+@media (max-width: 1023px) {
+  .pricing-anchor {
+    scroll-margin-top: 68px;
+  }
+}
+
+@media (max-width: 599px) {
+  .join-closed {
+    padding: var(--space-16);
+  }
+
+  .join-closed__button,
+  .join-submit {
+    width: 100%;
+    justify-content: center;
+  }
+
+  .join-section__head > .btn {
+    width: 100%;
+    justify-content: center;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .plan-card,
+  .plan-card:hover {
+    transition: none;
+    transform: none;
+  }
 }

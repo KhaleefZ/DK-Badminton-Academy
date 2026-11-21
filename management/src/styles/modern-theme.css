@@ -464,7 +464,15 @@
 
 @media (min-width: 1024px) {
   .kpi-row {
-    grid-template-columns: repeat(4, 1fr);
+    /* A page can ask for a different count through KpiRow's columns prop. */
+    grid-template-columns: repeat(var(--kpi-columns, 4), minmax(0, 1fr));
+  }
+}
+
+/* Five tiles only fit side by side on wide screens; on laptops they sit 3 + 2. */
+@media (min-width: 1024px) and (max-width: 1279px) {
+  .kpi-row[data-columns='5'] {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
   }
 }
 

@@ -42,7 +42,6 @@ export default function Footer() {
         />
         {footer.contactLine && <p className="fine">{footer.contactLine}</p>}
         <div className="site-footer__legal">
-          <p>{footer.note}</p>
           {footer.showStaffLogin && <a href={managementUrl}>{footer.staffLoginLabel}</a>}
         </div>
       </div>

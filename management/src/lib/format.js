@@ -91,6 +91,7 @@ export const MESSAGE_LABELS = {
   booking_changed: 'Booking changed',
   booking_cancelled: 'Booking cancelled',
   booking_whatsapp: 'WhatsApp chat opened',
+  membership_whatsapp: 'WhatsApp renewal reminder opened',
   enquiry_received: 'Enquiry received',
   staff_new_booking: 'Staff alert: new booking',
   staff_new_enquiry: 'Staff alert: new enquiry',

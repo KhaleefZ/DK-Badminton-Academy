@@ -40,8 +40,7 @@
   "nav": {
     "links": [
       { "label": "Courts", "to": "/courts", "visible": true },
-      { "label": "Pricing", "to": "/pricing", "visible": true },
-      { "label": "Memberships", "to": "/membership", "visible": true },
+      { "label": "Pricing & memberships", "to": "/pricing", "visible": true },
       { "label": "About", "to": "/about", "visible": true },
       { "label": "Contact", "to": "/contact", "visible": true }
     ],
@@ -50,13 +49,13 @@
   },
   "footer": {
     "contactLine": "{address}. Opening hours: {hours}.",
-    "note": "Generated photography is not the actual venue.",
+    "note": "",
     "showStaffLogin": true,
     "staffLoginLabel": "Staff login"
   },
   "shared": {
     "reviews": {
-      "showSampleBadge": true,
+      "showSampleBadge": false,
       "sampleBadge": "Sample review",
       "items": [
         { "quote": "Booked an evening slot after work and was on court in ten minutes. The lighting is even and the court feels quick.", "name": "Karthik R.", "context": "Evening regular", "rating": 5 },
@@ -89,7 +88,7 @@
       "lead": "A place for the next rally. Explore badminton in {locality}.",
       "primaryButton": { "label": "Discover the courts", "to": "/courts" },
       "secondaryButton": { "label": "Make an enquiry", "to": "/contact" },
-      "note": "Court information, timings & rates: To be confirmed.",
+      "note": "",
       "image": { "file": "playerSmash", "imageId": null, "alt": "A badminton player leaping for a smash on a green court", "concept": true }
     },
     "locality": {
@@ -102,7 +101,7 @@
       "titleHighlight": "more play.",
       "text": "Start with the court, then ask us about the details that matter to your game. Facilities, surfaces and available slots are awaiting confirmation.",
       "button": { "label": "Explore courts", "to": "/courts" },
-      "note": "Court count & on-site amenities: To be confirmed.",
+      "note": "",
       "image": { "file": "hallSteel", "imageId": null, "alt": "An indoor badminton hall with a net across a green court", "concept": true }
     },
     "journey": {
@@ -142,7 +141,7 @@
           "popular": true,
           "badge": "Sample price",
           "features": ["Up to 12 one-hour court slots", "Priority booking 14 days ahead", "Bring a guest twice a month"],
-          "button": { "label": "See memberships", "to": "/membership" }
+          "button": { "label": "See memberships", "to": "/pricing#plans" }
         },
         {
           "title": "Coaching enquiries",
@@ -159,7 +158,7 @@
       ],
       "popularBadge": "Most popular",
       "fromLabel": "From",
-      "note": "Sample pricing for design review. Final rates, GST, batch timings and inclusions to be confirmed by the academy.",
+      "note": "",
       "bannerTitle": "Clear before you commit.",
       "bannerText": "All prices, inclusions, taxes and membership policies are to be confirmed. Request current information directly from the academy.",
       "bannerButton": { "label": "Request pricing", "to": "/contact?topic=court-sessions" }
@@ -175,12 +174,12 @@
     "reviews": {
       "overline": "04 / From the court",
       "title": "Players say it best.",
-      "note": "Sample reviews for design review. Replace with verified player reviews before launch."
+      "note": ""
     },
     "faq": {
       "overline": "05 / Before you play",
       "title": "A few things to know.",
-      "note": "Useful starting points. Final venue details will be confirmed by the academy."
+      "note": ""
     },
     "contactBand": {
       "overline": "{locality} / {city} / {state}",
@@ -214,38 +213,52 @@
       "title": "Good questions. Clear answers.",
       "text": "The academy will confirm the specifics. No facility or equipment provision is guaranteed in this concept.",
       "facilities": [
-        { "label": "Court count & surface", "value": "To be confirmed" },
-        { "label": "Lighting & ventilation", "value": "To be confirmed" },
-        { "label": "Equipment & footwear requirements", "value": "To be confirmed" },
-        { "label": "Changing facilities & parking", "value": "To be confirmed" },
-        { "label": "Accessibility & spectator access", "value": "To be confirmed" }
+        { "label": "Court count & surface", "value": "Available" },
+        { "label": "Lighting & ventilation", "value": "Available" },
+        { "label": "Equipment & footwear requirements", "value": "Available" },
+        { "label": "Changing facilities & parking", "value": "Available" },
+        { "label": "Accessibility & spectator access", "value": "Available" }
       ]
     },
     "availability": {
-      "overline": "Availability today",
-      "title": "A time that fits.",
+      "overline": "Court booking",
+      "title": "Book your court. Own the game.",
       "dateLabel": "Date",
       "courtLabel": "Court",
       "noSlots": "No more free slots on this date. See other days in the booking page.",
       "checking": "Checking availability…",
       "cardTitle": "Take the next step.",
-      "cardText": "Pick a date and time, and your slot is held while you pay.",
-      "cardButton": { "label": "Continue booking", "to": "/booking" }
+      "cardText": "Choose your preferred date and time, select your court, and book your next badminton session with ease.",
+      "cardButton": { "label": "Book a court", "to": "/booking" }
     }
   },
   "pricing": {
     "sections": [
       { "id": "hero", "label": "Top section and cards", "visible": true },
       { "id": "rates", "label": "Court rates (from your saved prices)", "visible": true },
+      { "id": "plans", "label": "Membership plans (from your saved plans)", "visible": true },
       { "id": "compare", "label": "Comparison table", "visible": true },
+      { "id": "join", "label": "Membership joining form", "visible": true },
       { "id": "commit", "label": "Before you commit", "visible": true }
     ],
+    "plans": {
+      "overline": "Memberships",
+      "title": "Play on a fixed time, every week.",
+      "lead": "Every membership runs monthly. Pick one to see its times and join online.",
+      "joinButton": "Join this plan",
+      "selectedBadge": "Selected"
+    },
+    "join": {
+      "closedText": "Choose a plan above, or start here. It takes about two minutes, and your place is held while you pay.",
+      "openButton": "Start joining",
+      "closeButton": "Close the form"
+    },
     "hero": {
       "overline": "Pricing & membership enquiries",
       "title": "More game. Less guesswork.",
       "titleHighlight": "Less guesswork.",
       "lead": "Choose a conversation to start. Rates and available membership options are to be confirmed.",
-      "button": { "label": "See membership plans", "to": "/membership" },
+      "button": { "label": "See membership plans", "to": "/pricing#plans" },
       "notice": "These are enquiry categories, not confirmed products. No plan, price, benefit or booking entitlement is guaranteed.",
       "cards": [
         {
@@ -416,9 +429,9 @@
       "emailHint": "Your booking details go here.",
       "notesLabel": "Additional notes (optional)",
       "consent": "I agree that the academy may contact me about this booking.",
-      "policyNote": "Cancellation and refund rules are being finalised. Contact the academy if your plans change.",
+      "policyNote": "Cancel 24 hours or more before your start time for a full refund. See the Cancellation & Refund Policy in the footer for all the terms.",
       "backButton": "Back: choose a slot",
-      "submitButton": "Hold slot and pay",
+      "submitButton": "Pay",
       "submittingButton": "Holding your slot…",
       "incompleteNote": "Complete the required fields and the agreement to continue.",
       "holdNote": "We’ll hold this slot for {minutes} minutes while you pay."
@@ -488,9 +501,12 @@
       "codeLabel": "Referral code (optional)",
       "codeButton": "Apply",
       "consent": "I agree that the academy may contact me about this membership.",
-      "policyNote": "Cancellation and refund rules are being finalised. Your place is held for {minutes} minutes while you pay.",
+      "policyNote": "Your place is held for {minutes} minutes while you pay. Membership months aren\u2019t refunded once they start; see the Cancellation & Refund Policy in the footer.",
       "submitButton": "Hold my place",
-      "submittingButton": "Holding your place…"
+      "submittingButton": "Holding your place…",
+      "choosePlanError": "Choose a plan first.",
+      "chooseBatchError": "Choose your batch.",
+      "chooseTimeError": "Choose your courts, days and start time."
     },
     "status": {
       "welcomeTitle": "Welcome, {name}.",
@@ -524,5 +540,9 @@
     "primaryButton": { "label": "Back to home", "to": "/" },
     "secondaryButton": { "label": "Explore courts", "to": "/courts" }
   },
-  "customPages": []
+  "customPages": [
+    {"slug": "cancellation-refund-policy", "title": "Cancellation & Refund Policy", "overline": "Policies", "body": "Last updated: 19 November 2026. This policy covers court bookings and memberships paid online at DK Badminton Academy, Selvapuram North, Coimbatore, and payments made at the academy.\n\n## Court bookings\n\nA court time is yours once it is paid for. While you pay online, the court is held for you for 10 minutes. If the payment doesn't go through in that time, the hold ends and no money is taken.\n\nYou can cancel a booking by calling or messaging the academy (see the Contact page) with your booking number.\n\nCancel 24 hours or more before your start time: full refund.\n\nCancel between 6 and 24 hours before your start time: 50% refund.\n\nCancel less than 6 hours before your start time, or don't turn up: no refund.\n\nInstead of cancelling, you can move a booking to another free time once, free of charge, if you ask at least 24 hours before your start time.\n\n## If the academy cancels\n\nIf we have to close a court, for example for maintenance, a power cut or an event, we will tell you as soon as we can and you can choose a full refund or another time at no cost.\n\n## Payments that go wrong\n\nIf money leaves your account but your booking isn't confirmed (for example, someone else took the court after your hold ended, or you were charged twice), the extra payment is refunded in full automatically. You don't need to ask.\n\n## Memberships\n\nMemberships run month by month from their start date and must be paid before each month begins.\n\nYou can stop a membership at any time by telling the academy before your next month starts. Nothing more is charged after that.\n\nA month that has already started is not refunded, including sessions you miss. A month you have paid for that hasn't started yet is refunded in full.\n\nIf the academy ends or changes a batch so that you can no longer attend, you can move to another batch or get a refund for the remaining sessions in that month.\n\n## How refunds are paid\n\nRefunds go back to the way you paid. Online payments are refunded through our payment gateway within 2 working days of the refund being approved, and your bank usually shows the money within 5 to 7 working days. Cash and UPI payments made at the academy are refunded at the academy.\n\nOnline payment processing charges are not deducted from refunds.\n\n## Contact\n\nFor cancellations, refunds or questions about this policy, contact the academy using the details on the Contact page. Please have your booking or membership number ready.", "visible": true, "showInFooter": true, "image": {"file": "", "imageId": null, "alt": "", "concept": false}},
+    {"slug": "privacy-policy", "title": "Privacy Policy", "overline": "Policies", "body": "Last updated: 21 November 2026. This explains what personal information DK Badminton Academy (Selvapuram North, Coimbatore) collects through this website and at the academy, why, and what you can ask us to do with it.\n\n## What we collect\n\nWhen you book a court: your name and mobile number, and your email address if you give one, the court, date and time you chose, and any notes you add.\n\nWhen you join a membership: your name, mobile number and email address, the players on a court membership, your batch or court time, and your payments.\n\nWhen you send an enquiry: your name, email address, phone number if you give one, and your message.\n\nWhen you pay online: payments are handled by our payment gateway, Razorpay. We receive the amount, a payment reference and whether it succeeded. We never see or store your card, UPI or bank details.\n\n## Why we use it\n\nTo hold and confirm your booking or membership, take payment, send confirmations and receipts, remind you about renewals, answer your enquiries, issue refunds, and keep the records we need for our accounts.\n\nWe contact you about your bookings and membership by email or WhatsApp. We don't send marketing messages, and we don't sell or rent your information to anyone.\n\n## Who else handles it\n\nRazorpay processes online payments. Cloudflare hosts this website and stores its data. Google (Gmail) delivers our emails. WhatsApp carries messages we send you from the academy's phone. Each handles your information only to provide that service. Some of these services may store data outside India.\n\n## How long we keep it\n\nBooking, membership and payment records are kept for as long as accounting and tax law requires. Enquiries are kept while we deal with them and for a reasonable time afterwards. You can ask us to delete information we no longer need to keep.\n\n## Cookies and storage\n\nThis website uses no advertising or tracking cookies and no analytics. While you book, your choices are kept in your browser's session storage so they survive a page refresh; this is cleared when you close the tab.\n\n## Your choices and rights\n\nUnder India's Digital Personal Data Protection Act, 2023, you can ask to see the personal information we hold about you, have it corrected, or have it deleted where we don't need to keep it. You can also withdraw consent for messages that aren't needed for a booking or membership you hold.\n\n## Questions and complaints\n\nContact the academy using the details on the Contact page. We will reply within 7 working days. If you are not satisfied, you may complain to the Data Protection Board of India.", "visible": true, "showInFooter": true, "image": {"file": "", "imageId": null, "alt": "", "concept": false}},
+    {"slug": "terms-and-conditions", "title": "Terms & Conditions", "overline": "Policies", "body": "Last updated: 21 November 2026. These terms apply when you use this website or book courts, join a membership or play at DK Badminton Academy, Selvapuram North, Coimbatore. By booking or paying you agree to them.\n\n## Booking a court\n\nBookings are for the court, date and time shown. A court is held for 10 minutes while you pay online and is yours once payment is confirmed. Prices are shown before you pay and include any charges we apply.\n\nPlease arrive on time. Your booking ends at the time shown, even if you start late, so the next players can start on time.\n\nCancellations, moves and refunds follow our Cancellation & Refund Policy.\n\n## Memberships\n\nA membership gives a fixed batch or a fixed court time for one month at a time, and is renewed month by month. It is for the named member (and, for a court membership, the players listed with us) and can't be transferred or shared without our agreement.\n\nEach month must be paid before it starts. If a membership isn't renewed, your batch place or court time may be given to someone else.\n\nReferral codes and credit can only be used as described when they are given, and can't be exchanged for cash.\n\n## At the academy\n\nWear clean, non-marking sports shoes on court. Look after the courts, nets and equipment; damage caused deliberately or carelessly may be charged for.\n\nFollow staff instructions and treat other players and staff with respect. We may ask anyone who doesn't to leave, without a refund.\n\nChildren under 12 must be supervised by an adult unless they are in a coached session.\n\n## Your safety\n\nBadminton is a physical sport. Play within your fitness, warm up, and tell staff about any accident straight away. You play at your own risk, except where an injury is caused by our negligence. We are not responsible for personal belongings left at the academy.\n\n## Changes and closures\n\nWe may need to close courts or change times, for example for maintenance, events or reasons outside our control. We will tell you as soon as we can and offer another time or a refund as set out in our Cancellation & Refund Policy.\n\nWe may update prices and these terms. Changes don't affect bookings and membership months already paid for.\n\n## Using this website\n\nGive accurate details when you book so we can reach you. Don't misuse the website or try to book courts you don't intend to use.\n\n## Law\n\nThese terms are governed by the laws of India, and the courts of Coimbatore, Tamil Nadu have jurisdiction.\n\n## Contact\n\nFor questions about these terms, contact the academy using the details on the Contact page.", "visible": true, "showInFooter": true, "image": {"file": "", "imageId": null, "alt": "", "concept": false}}
+  ]
 }

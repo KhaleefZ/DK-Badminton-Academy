@@ -3,6 +3,12 @@ import { db } from '../db/client.js';
 import { bookings, closures, courtReservations, courts, memberships, openingHours, priceRules, settings } from '../db/schema.js';
 import { addDays, instantAt, toTime, venueToday, weekdayOf } from '../lib/time.js';
 
+/**
+ * The website takes bookings for today and the days after it: the venue's "booking window" setting,
+ * counting today, and never more than 15 days (today and the next 14).
+ */
+export const MAX_BOOKING_WINDOW_DAYS = 15;
+
 type Rule = { courtId: string | null; startMinute: number; endMinute: number; ratePaise: number };
 
 /** Adds up a slot minute by minute, so one that crosses a rate change is charged fairly. Null if any minute has no rate. */
@@ -38,7 +44,11 @@ export async function quote(courtId: string, date: string, start: number, end: n
   return slotPrice(rules.filter((r) => r.days.includes(weekday)), courtId, start, end);
 }
 
-export async function availabilityFor(date: string, now = new Date()) {
+/**
+ * Every slot of the day, per court. `stepMinutes` overrides the venue's slot length: the website
+ * always shows 30-minute slots, which players join into a 1 h or 1 h 30 booking.
+ */
+export async function availabilityFor(date: string, now = new Date(), { stepMinutes }: { stepMinutes?: number } = {}) {
   await releaseExpiredHolds();
   const dayStart = instantAt(date, 0);
   const dayEnd = instantAt(date, 1440);
@@ -54,8 +64,10 @@ export async function availabilityFor(date: string, now = new Date()) {
     db.select().from(courtReservations).where(and(eq(courtReservations.status, 'active'), inDay(courtReservations))),
   ]);
   const todaysRules = rules.filter((r) => r.days.includes(weekday));
-  const { slotMinutes, advanceBookingDays, minNoticeMinutes } = venue!;
-  const lastOnlineDate = addDays(venueToday(now), advanceBookingDays);
+  const { minNoticeMinutes, advanceBookingDays } = venue!;
+  const windowDays = Math.min(Math.max(advanceBookingDays, 1), MAX_BOOKING_WINDOW_DAYS);
+  const slotMinutes = stepMinutes ?? venue!.slotMinutes;
+  const lastOnlineDate = addDays(venueToday(now), windowDays - 1);
   const earliestOnline = new Date(now.getTime() + minNoticeMinutes * 60_000);
 
   return {

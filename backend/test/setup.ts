@@ -37,7 +37,7 @@ beforeEach(async () => {
     run(`UPDATE message_settings SET email_enabled = 1, sender_name = NULL, sender_email = NULL, app_password_encrypted = NULL, notify_email = NULL, daily_email_limit = 100, whatsapp_number = NULL`),
     run(`UPDATE referral_program SET enabled = 0, discount_type = 'percent', discount_value = 10, reward_paise = 0`),
     run(`UPDATE site_content SET content = '{}', version = 1, updated_by_staff_id = NULL`),
-    run(`UPDATE settings SET slot_minutes = 60, advance_booking_days = 7, min_notice_minutes = 60, hold_minutes = 10`),
+    run(`UPDATE settings SET slot_minutes = 60, advance_booking_days = 15, min_notice_minutes = 60, hold_minutes = 10`),
     run(`UPDATE payment_settings SET enabled = 0, gateway = NULL, mode = 'test', key_id = NULL, key_secret_encrypted = NULL, webhook_secret_encrypted = NULL, updated_by_staff_id = NULL`),
   ]);
 });

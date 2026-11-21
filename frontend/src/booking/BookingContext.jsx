@@ -7,6 +7,7 @@ const STORAGE_KEY = 'dk-booking';
 const initialState = () => ({
   date: todayISO(),
   courtId: null,
+  // The chosen time: { start, end, durationMinutes, pricePaise }, made of 30-minute slots.
   slot: null,
   details: { name: '', phone: '', email: '', notes: '' },
 });
@@ -31,7 +32,8 @@ function reducer(state, action) {
 function load() {
   try {
     const saved = JSON.parse(sessionStorage.getItem(STORAGE_KEY));
-    if (saved && saved.date >= todayISO()) return { ...initialState(), ...saved };
+    // A time saved before slots became 30 minutes has no length; drop it rather than guess.
+    if (saved && saved.date >= todayISO()) return { ...initialState(), ...saved, slot: saved.slot?.durationMinutes ? saved.slot : null };
   } catch {
     // Storage unavailable or corrupt — start fresh.
   }
@@ -90,5 +92,18 @@ export function useAvailability(date) {
   }, [date, version]);
 
   const reload = useCallback(() => setVersion((v) => v + 1), []);
+
+  // Other people book too: check again every 30 seconds and when the visitor comes back to the tab,
+  // so slots taken meanwhile stop showing as available.
+  useEffect(() => {
+    const timer = setInterval(reload, 30_000);
+    const onVisible = () => document.visibilityState === 'visible' && reload();
+    document.addEventListener('visibilitychange', onVisible);
+    return () => {
+      clearInterval(timer);
+      document.removeEventListener('visibilitychange', onVisible);
+    };
+  }, [reload]);
+
   return { data: data?.date === date ? data : null, error, reload };
 }

@@ -35,3 +35,35 @@ export function customerWhatsappUrl(booking: BookingForLink): string | null {
   const text = `Hi ${booking.customer.name}, your court booking ${booking.bookingNo} is confirmed: ${booking.courtName}, ${booking.date}, ${booking.start}-${booking.end}. Details: ${bookingLink(booking.id)}`;
   return `https://wa.me/${whatsappDigits(booking.customer.phone)}?text=${encodeURIComponent(text)}`;
 }
+
+type MembershipForReminder = {
+  id: string;
+  membershipNo: string;
+  holderName: string;
+  phone: string;
+  status: string;
+  endsOn: string;
+  pricePaise: number;
+  planName: string;
+};
+
+const longDate = (iso: string) => new Date(`${iso}T00:00:00Z`).toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric', timeZone: 'UTC' });
+const rupees = (paise: number) => `₹${(paise / 100).toLocaleString('en-IN', { maximumFractionDigits: 2 })}`;
+
+/**
+ * A WhatsApp chat with the member, the renewal reminder already typed. Staff send it from the academy's
+ * phone, so it costs nothing (automatic sending would need WhatsApp's paid Business API).
+ */
+export function membershipReminderWhatsappUrl(m: MembershipForReminder, today: string): string | null {
+  if (!m.phone || m.status !== 'active') return null;
+  const ended = m.endsOn < today;
+  const text = [
+    `Hi ${m.holderName}, this is DK Badminton Academy.`,
+    ended
+      ? `Your ${m.planName} membership (${m.membershipNo}) ended on ${longDate(m.endsOn)}.`
+      : `Your ${m.planName} membership (${m.membershipNo}) ${m.endsOn === today ? 'ends today' : `ends on ${longDate(m.endsOn)}`}.`,
+    `Renewing keeps your place: ${rupees(m.pricePaise)} for the next month. Reply here or pay at the academy to renew.`,
+    `Your membership details: ${membershipLink(m.id)}`,
+  ].join('\n\n');
+  return `https://wa.me/${whatsappDigits(m.phone)}?text=${encodeURIComponent(text)}`;
+}

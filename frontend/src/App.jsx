@@ -1,4 +1,4 @@
-import { createBrowserRouter, RouterProvider } from 'react-router-dom';
+import { createBrowserRouter, Navigate, RouterProvider } from 'react-router-dom';
 import { domAnimation, LazyMotion } from 'motion/react';
 import Layout from './components/Layout';
 import { BookingProvider } from './booking/BookingContext';
@@ -11,7 +11,6 @@ import ChooseSlot from './pages/booking/ChooseSlot';
 import Details from './pages/booking/Details';
 import Outcome from './pages/booking/Outcome';
 import Pay from './pages/booking/Pay';
-import Join from './pages/membership/Join';
 import MembershipStatus from './pages/membership/Status';
 import NotFound from './pages/NotFound';
 import CustomPage from './pages/CustomPage';
@@ -40,7 +39,8 @@ const router = createBrowserRouter([
       {
         path: 'membership',
         children: [
-          { index: true, element: <Join /> },
+          // Joining now happens on the pricing page; old links and bookmarks land on its form.
+          { index: true, element: <Navigate to="/pricing#join" replace /> },
           { path: 'status/:token', element: <MembershipStatus /> },
         ],
       },

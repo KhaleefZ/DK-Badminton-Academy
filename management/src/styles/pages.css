@@ -977,3 +977,97 @@
   display: grid;
   gap: var(--space-4);
 }
+
+/* ---------- Memberships: end date and next step ---------- */
+.btn--sm {
+  height: 34px;
+  padding-inline: 14px;
+  font-size: 13px;
+}
+
+/* Countdown under each end date in the list: quiet while there's time, then warning, then danger. */
+.end-countdown--ok {
+  color: var(--text-secondary);
+}
+
+.end-countdown--soon {
+  color: var(--status-warning);
+  font-weight: 600;
+}
+
+.end-countdown--ended {
+  color: var(--status-danger);
+  font-weight: 600;
+}
+
+.data-table__actions {
+  white-space: nowrap;
+  text-align: right;
+}
+
+.data-table__actions .link-button + .link-button {
+  margin-left: 12px;
+}
+
+/* The end date block at the top of a membership's details. */
+.membership-end {
+  display: grid;
+  gap: 4px;
+  margin-top: 12px;
+  padding: 14px 16px;
+  border-radius: 10px;
+  border: 1px solid var(--border-subtle, #e5e7eb);
+}
+
+.membership-end--soon {
+  background: var(--status-warning-bg);
+  border-color: transparent;
+}
+
+.membership-end--ended {
+  background: var(--status-danger-bg);
+  border-color: transparent;
+}
+
+.membership-end__label {
+  margin: 0;
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--text-secondary);
+}
+
+.membership-end__date {
+  margin: 0;
+  font-size: 20px;
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+}
+
+.membership-end__countdown {
+  margin: 0;
+  font-size: 13px;
+  font-weight: 600;
+}
+
+.membership-end--soon .membership-end__countdown {
+  color: var(--status-warning);
+}
+
+.membership-end--ended .membership-end__countdown {
+  color: var(--status-danger);
+}
+
+.membership-end__actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: 8px;
+}
+
+/* Refund dialog: quick amounts under the field */
+.refund-presets {
+  display: flex;
+  gap: 16px;
+}

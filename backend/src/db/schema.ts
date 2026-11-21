@@ -168,6 +168,7 @@ export const settings = sqliteTable(
     phone: text('phone'),
     email: text('email'),
     slotMinutes: integer('slot_minutes').notNull().default(60),
+    // The website's booking window in days, counting today (at most 15). Set to 15 by migration 0004.
     advanceBookingDays: integer('advance_booking_days').notNull().default(7),
     minNoticeMinutes: integer('min_notice_minutes').notNull().default(60),
     holdMinutes: integer('hold_minutes').notNull().default(10),
@@ -327,6 +328,8 @@ export const bookings = sqliteTable(
   (t) => [
     index('bookings_customer_idx').on(t.customerId),
     index('bookings_gateway_order_idx').on(t.gatewayOrderId),
+    // Expired holds are released on every availability check; without this it reads every booking.
+    index('bookings_hold_idx').on(t.status, t.holdExpiresAt),
     check('bookings_amount', sql`${t.amountPaise} >= 0`),
     check('bookings_source_valid', inList(t.source, bookingSource.enumValues)),
     check('bookings_status_valid', inList(t.status, bookingStatus.enumValues)),
@@ -357,7 +360,9 @@ export const payments = sqliteTable(
     gateway: paymentGateway('gateway'),
     gatewayOrderId: text('gateway_order_id'),
     gatewayPaymentId: text('gateway_payment_id').unique(),
-    // A refunded receipt is also voided, so every total that leaves out voided receipts leaves it out too.
+    // A fully refunded receipt is also voided, so every total that leaves out voided receipts leaves it out too.
+    // A partly refunded one stays, and totals count amount_paise - refunded_paise.
+    refundedPaise: integer('refunded_paise').notNull().default(0),
     refundedAt: timestamp('refunded_at'),
     gatewayRefundId: text('gateway_refund_id'),
   },
@@ -442,6 +447,8 @@ export const messages = sqliteTable(
     index('messages_queue_idx').on(t.status, t.nextAttemptAt),
     index('messages_booking_idx').on(t.bookingId),
     index('messages_created_idx').on(t.createdAt),
+    // The daily email cap counts today's sent emails every minute; without this it reads every sent one.
+    index('messages_sent_idx').on(t.channel, t.status, t.sentAt),
     check('messages_channel_valid', inList(t.channel, messageChannel.enumValues)),
     check('messages_status_valid', inList(t.status, messageStatus.enumValues)),
   ],
@@ -539,6 +546,7 @@ export const memberships = sqliteTable(
     index('memberships_ends_idx').on(t.endsOn),
     index('memberships_phone_digits_idx').on(t.phoneDigits),
     index('memberships_gateway_order_idx').on(t.gatewayOrderId),
+    index('memberships_hold_idx').on(t.status, t.holdExpiresAt),
     check('memberships_price', sql`${t.pricePaise} >= 0`),
     check('memberships_kind_valid', inList(t.kind, membershipKind.enumValues)),
     check('memberships_status_valid', inList(t.status, membershipStatus.enumValues)),

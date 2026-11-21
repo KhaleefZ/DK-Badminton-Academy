@@ -13,7 +13,7 @@ import { bookingViews } from './bookings.js';
 
 /** What's owed across a customer's active bookings. */
 const dueSql = sql<number>`coalesce((
-  SELECT sum(max(b.amount_paise - coalesce((SELECT sum(p.amount_paise) FROM payments p WHERE p.booking_id = b.id AND p.voided_at IS NULL), 0), 0))
+  SELECT sum(max(b.amount_paise - coalesce((SELECT sum(p.amount_paise - p.refunded_paise) FROM payments p WHERE p.booking_id = b.id AND p.voided_at IS NULL), 0), 0))
   FROM bookings b WHERE b.customer_id = customers.id AND b.status = 'active'
 ), 0)`;
 const bookingCountSql = sql<number>`(SELECT count(*) FROM bookings b WHERE b.customer_id = customers.id AND b.status = 'active')`;

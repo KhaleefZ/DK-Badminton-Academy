@@ -28,7 +28,12 @@ const venueDetails = z.object({
   phone: optionalText(20),
   email: z.union([z.literal(''), z.string().trim().toLowerCase().email('Enter a valid email.').max(254)]).nullish().transform((v) => v || null),
   slotMinutes: z.union([z.literal(30), z.literal(60)], { error: 'A slot must be 30 or 60 minutes.' }),
-  advanceBookingDays: z.number({ error: 'Enter how many days ahead people can book.' }).int().min(0, 'Days ahead can’t be negative.').max(365, 'Days ahead can be at most 365.'),
+  // Days the website takes bookings for, counting today: 15 is today and the next 14.
+  advanceBookingDays: z
+    .number({ error: 'Enter how many days people can book online.' })
+    .int('Enter a whole number of days.')
+    .min(1, 'Allow at least 1 day (today).')
+    .max(15, 'The website can take bookings for at most 15 days (today and the next 14).'),
   minNoticeMinutes: z.number({ error: 'Enter the booking notice in minutes.' }).int().min(0, 'Notice can’t be negative.').max(10080, 'Notice can be at most 7 days.'),
   holdMinutes: z.number({ error: 'Enter how long a slot is held for payment.' }).int().min(2, 'Hold a slot for at least 2 minutes.').max(60, 'Hold a slot for at most 60 minutes.').optional(),
 });

@@ -78,6 +78,8 @@ describe('venue settings', () => {
     [{ ...venue, venueName: ' ' }],
     [{ ...venue, slotMinutes: 45 }],
     [{ ...venue, advanceBookingDays: -1 }],
+    [{ ...venue, advanceBookingDays: 0 }],
+    [{ ...venue, advanceBookingDays: 16 }],
     [{ ...venue, minNoticeMinutes: 1.5 }],
     [{ ...venue, email: 'nope' }],
   ])('refuses %j', async (body) => {
@@ -198,11 +200,19 @@ describe('availability', () => {
     expect((await slotsOn())[0]).toMatchObject({ pricePaise: 50000, onlineBookable: true });
   });
 
-  it('applies the advance limit to the website only', async () => {
-    await call('patch', '/settings').send({ ...venue, advanceBookingDays: 1 }).expect(200);
-    await openDay();
+  it('applies the 15-day booking window to the website only', async () => {
+    await call('put', '/settings/hours').send({ hours: allDays.map((weekday) => ({ weekday, opens: '06:00', closes: '10:00' })) }).expect(200);
     await setPrices([{ courtId: null, days: allDays, start: '00:00', end: '24:00', ratePaise: 50000 }]).expect(200);
-    expect((await slotsOn())[0]).toMatchObject({ status: 'free', onlineBookable: false });
+    expect((await slotsOn(addDays(venueToday(), 14)))[0]).toMatchObject({ status: 'free', onlineBookable: true });
+    expect((await slotsOn(addDays(venueToday(), 15)))[0]).toMatchObject({ status: 'free', onlineBookable: false });
+  });
+
+  it('lets the Owner shorten the window: 7 days is today and the next 6', async () => {
+    await call('put', '/settings/hours').send({ hours: allDays.map((weekday) => ({ weekday, opens: '06:00', closes: '10:00' })) }).expect(200);
+    await setPrices([{ courtId: null, days: allDays, start: '00:00', end: '24:00', ratePaise: 50000 }]).expect(200);
+    await call('patch', '/settings').send({ ...venue, advanceBookingDays: 7 }).expect(200);
+    expect((await slotsOn(addDays(venueToday(), 6)))[0]).toMatchObject({ onlineBookable: true });
+    expect((await slotsOn(addDays(venueToday(), 7)))[0]).toMatchObject({ onlineBookable: false });
   });
 
   it('marks past slots on an earlier date', async () => {

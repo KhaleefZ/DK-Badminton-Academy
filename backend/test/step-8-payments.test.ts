@@ -237,6 +237,35 @@ describe('refunds by staff', () => {
     expect((await admin('post', `/payments/${receipt.id}/refund`).send({ reason: 'Again' }).expect(409)).body.error.code).toBe('REFUND_FAILED');
   });
 
+  it('refunds part of a payment (the policy’s 50%), then the rest, keeping totals right', async () => {
+    const receipt = await paidReceipt();
+    const refund = (body: object) => admin('post', `/payments/${receipt.id}/refund`).send({ reason: 'Cancelled 10 hours before', ...body });
+
+    const half = (await refund({ amountPaise: 25000 }).expect(200)).body.payment;
+    expect(half).toMatchObject({ refundedPaise: 25000, voidedAt: null, gatewayRefundId: 'rfnd_1' });
+    expect(fake.state.refunds.at(-1)).toEqual({ paymentId: receipt.gatewayPaymentId, amountPaise: 25000 });
+    // The booking now counts only what was kept.
+    const [booking] = (await admin('get', `/bookings?date=${FUTURE}`).expect(200)).body.bookings;
+    expect(booking).toMatchObject({ paidPaise: 25000 });
+
+    expect((await refund({ amountPaise: 25001 }).expect(409)).body.error.message).toMatch(/more than is left to refund \(₹250\)/);
+    await refund({ amountPaise: 0 }).expect(400);
+
+    const rest = (await refund({}).expect(200)).body.payment;
+    expect(rest).toMatchObject({ refundedPaise: 50000, voidReason: 'Refunded: Cancelled 10 hours before' });
+    expect(rest.voidedAt).not.toBeNull();
+    expect(fake.state.refunds.at(-1)!.amountPaise).toBe(25000);
+    expect((await refund({}).expect(409)).body.error.message).toMatch(/already been refunded/);
+  });
+
+  it('lets the desk take the kept half again after a partial refund, but no more', async () => {
+    const receipt = await paidReceipt();
+    await admin('post', `/payments/${receipt.id}/refund`).send({ reason: 'Moved', amountPaise: 20000 }).expect(200);
+    const id = receipt.bookingId!;
+    expect((await admin('post', `/bookings/${id}/payments`).send({ amountPaise: 20001, method: 'cash' }).expect(409)).body.error.message).toMatch(/more than this booking still owe/);
+    await admin('post', `/bookings/${id}/payments`).send({ amountPaise: 20000, method: 'cash' }).expect(201);
+  });
+
   it('refuses to refund cash or UPI taken at the desk', async () => {
     const { token } = await hold();
     await site('post', `/bookings/${token}/checkout`).expect(200);

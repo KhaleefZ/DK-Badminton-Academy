@@ -20,7 +20,7 @@ const TABS = [
   { key: 'footer', label: 'Footer', intro: '{hours} shows your saved opening hours, or the text under Business until hours are saved.' },
   { key: 'home', label: 'Home' },
   { key: 'courts', label: 'Courts' },
-  { key: 'pricing', label: 'Pricing' },
+  { key: 'pricing', label: 'Pricing & memberships' },
   { key: 'about', label: 'About' },
   { key: 'contact', label: 'Contact' },
   { key: 'booking', label: 'Booking', intro: 'Words in {curly brackets}, such as {name} or {bookingNo}, are filled in for each customer. Keep them as written.' },

@@ -113,7 +113,7 @@ export default function Status() {
             {confirmed && m.referralCode && <Notice>{fill(text.referralNotice, { code: m.referralCode })}</Notice>}
             {!confirmed && !waiting && <p className="lead">{text.nothingCharged}</p>}
             <div className="button-row">
-              {!confirmed && !waiting && <Button to="/membership">{text.seeButton}</Button>}
+              {!confirmed && !waiting && <Button to="/pricing#plans">{text.seeButton}</Button>}
               {chat && <Button href={chat}>{text.whatsappButton}</Button>}
               <Button to="/contact?topic=regular-play" variant="secondary">
                 {text.contactButton}

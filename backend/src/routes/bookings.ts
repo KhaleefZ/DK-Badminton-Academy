@@ -17,7 +17,7 @@ import { enqueueBookingMessage } from '../messages/queue.js';
 import { quote, releaseExpiredHolds } from '../schedule/availability.js';
 import { prepareMove, prepareReservation, requireOpen, setReservationStatus } from '../schedule/reservations.js';
 
-const paidSql = sql<number>`coalesce((SELECT sum(p.amount_paise) FROM payments p WHERE p.booking_id = bookings.id AND p.voided_at IS NULL), 0)`;
+const paidSql = sql<number>`coalesce((SELECT sum(p.amount_paise - p.refunded_paise) FROM payments p WHERE p.booking_id = bookings.id AND p.voided_at IS NULL), 0)`;
 
 /** A date and two times, checked and turned into minutes. Used by bookings and blocks. */
 export const courtTime = z
@@ -111,7 +111,7 @@ async function findBooking(id: string) {
 
 const paidOn = async (bookingId: string) => {
   const [row] = await db
-    .select({ paid: sql<number>`coalesce(sum(${payments.amountPaise}), 0)` })
+    .select({ paid: sql<number>`coalesce(sum(${payments.amountPaise} - ${payments.refundedPaise}), 0)` })
     .from(payments)
     .where(and(eq(payments.bookingId, bookingId), sql`${payments.voidedAt} IS NULL`));
   return row!.paid;
@@ -132,6 +132,7 @@ const paymentView = (p: typeof payments.$inferSelect) => ({
   receivedAt: p.receivedAt,
   voidedAt: p.voidedAt,
   voidReason: p.voidReason,
+  refundedPaise: p.refundedPaise,
 });
 
 async function findOne(where: SQL) {

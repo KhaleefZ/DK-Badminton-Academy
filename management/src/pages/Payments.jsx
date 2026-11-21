@@ -3,6 +3,7 @@ import { Link, useSearchParams } from 'react-router-dom';
 import { AnimatePresence } from 'motion/react';
 import PageHeader from '../layout/PageHeader';
 import Button from '../components/Button';
+import Field from '../components/Field';
 import KpiTile, { KpiRow } from '../components/KpiTile';
 import Notice from '../components/Notice';
 import Panel from '../components/Panel';
@@ -16,13 +17,62 @@ import PaymentDialog from '../dialogs/PaymentDialog';
 import { useCan } from '../auth/AuthContext';
 import { useWorkspace } from '../store/WorkspaceContext';
 import { api } from '../lib/api';
-import { formatDate, formatInstant, formatLongDate, formatPaise, PAYMENT_LABELS, venueToday } from '../lib/format';
+import { formatDate, formatInstant, formatLongDate, formatPaise, PAYMENT_LABELS, toPaise, venueToday } from '../lib/format';
 import { useResource } from '../lib/useResource';
 
 const METHOD_OPTIONS = [{ value: 'all', label: 'All methods' }, ...Object.entries(PAYMENT_LABELS).map(([value, label]) => ({ value, label }))];
 const targetOf = (p) => (p.bookingNo ? `/bookings/records/${p.bookingNo}` : `/memberships?selected=${p.membershipId}`);
 const sumPaise = (rows, key) => rows.reduce((sum, row) => sum + row[key], 0);
-const stateOf = (p) => (p.refundedAt ? 'Refunded' : p.voidedAt ? 'Voided' : 'Received');
+const stateOf = (p) => (p.refundedAt && p.voidedAt ? 'Refunded' : p.voidedAt ? 'Voided' : p.refundedPaise > 0 ? 'Part refunded' : 'Received');
+/** What can still be refunded from an online receipt. */
+const refundable = (p) => (p.voidedAt ? 0 : p.amountPaise - (p.refundedPaise ?? 0));
+
+/**
+ * Refund all or part of an online payment. The amount starts at what's left; the Cancellation & Refund
+ * Policy gives 50% back for a cancellation 6–24 hours before the start time.
+ */
+function RefundDialog({ receipt, onClose, onDone }) {
+  const left = refundable(receipt);
+  const [rupees, setRupees] = useState(String(left / 100));
+  const paise = toPaise(rupees);
+  const problem = paise === null || paise <= 0 ? 'Enter an amount above ₹0.' : paise > left ? `That’s more than is left to refund (${formatPaise(left)}).` : '';
+  return (
+    <ActionDialog
+      title={`Refund ${receipt.receiptNo}?`}
+      description={`Goes back to the customer through the payment gateway, usually within 5–7 working days. The booking or membership isn’t cancelled: do that separately if needed.`}
+      label={paise && !problem ? `Refund ${formatPaise(paise)}` : 'Refund'}
+      reasonLabel="Reason"
+      reasonRequired
+      onClose={onClose}
+      onConfirm={async (reason) => {
+        if (problem) throw new Error(problem);
+        await api(`/payments/${receipt.id}/refund`, { method: 'POST', body: { reason, amountPaise: paise } });
+        onDone(paise === left ? `${receipt.receiptNo} refunded.` : `${formatPaise(paise)} of ${receipt.receiptNo} refunded.`);
+      }}
+    >
+      <Field
+        label="Amount to refund (₹)"
+        type="number"
+        inputMode="decimal"
+        min="1"
+        step="0.01"
+        value={rupees}
+        onChange={(e) => setRupees(e.target.value)}
+        error={rupees !== '' && problem ? problem : undefined}
+        hint={`${formatPaise(left)} can be refunded${receipt.refundedPaise > 0 ? ` (${formatPaise(receipt.refundedPaise)} already refunded)` : ''}.`}
+      />
+      <div className="refund-presets">
+        <button type="button" className="link-button small" onClick={() => setRupees(String(left / 100))}>
+          Full ({formatPaise(left)})
+        </button>
+        <button type="button" className="link-button small" onClick={() => setRupees(String(Math.round(receipt.amountPaise / 2) / 100))} disabled={Math.round(receipt.amountPaise / 2) > left}>
+          50% ({formatPaise(Math.round(receipt.amountPaise / 2))})
+        </button>
+      </div>
+      <p className="fine muted">Policy: 24 hours or more before the start: full refund. 6–24 hours: 50%. Under 6 hours or a no-show: none.</p>
+    </ActionDialog>
+  );
+}
 
 export default function Payments() {
   const { notify } = useWorkspace();
@@ -46,7 +96,8 @@ export default function Payments() {
   const issues = issuesRes.data?.issues ?? [];
 
   const receipts = receiptsRes.data?.payments ?? [];
-  const live = receipts.filter((p) => !p.voidedAt);
+  // Money kept: a partly refunded receipt counts only what wasn't given back.
+  const live = receipts.filter((p) => !p.voidedAt).map((p) => ({ ...p, keptPaise: p.amountPaise - (p.refundedPaise ?? 0) }));
   const dues = duesRes.data?.bookings ?? [];
   const pager = usePagination(receipts, 8);
   const receipt = receipts.find((p) => p.receiptNo === params.get('receipt')) ?? receipts[0];
@@ -67,11 +118,11 @@ export default function Payments() {
     <>
       <PageHeader title="Payments & outstanding dues" subtitle={q ? `Search: ${q}` : `${date === today ? 'Today, ' : ''}${formatLongDate(date)}`} />
 
-      <KpiRow>
-        <KpiTile label={date === today && !q ? 'Received today' : 'Received'} value={formatPaise(sumPaise(live, 'amountPaise'))} caption={`${live.length} ${live.length === 1 ? 'receipt' : 'receipts'}`} />
-        <KpiTile label="Cash" value={formatPaise(sumPaise(live.filter((p) => p.method === 'cash'), 'amountPaise'))} caption="Should match the cash drawer" />
-        <KpiTile label="UPI" value={formatPaise(sumPaise(live.filter((p) => p.method === 'upi'), 'amountPaise'))} caption="Should match the bank statement" />
-        <KpiTile label="Online" value={formatPaise(sumPaise(live.filter((p) => p.method === 'online'), 'amountPaise'))} caption="Paid on the website; settles to the bank" />
+      <KpiRow columns={5}>
+        <KpiTile label={date === today && !q ? 'Received today' : 'Received'} value={formatPaise(sumPaise(live, 'keptPaise'))} caption={`${live.length} ${live.length === 1 ? 'receipt' : 'receipts'}`} />
+        <KpiTile label="Cash" value={formatPaise(sumPaise(live.filter((p) => p.method === 'cash'), 'keptPaise'))} caption="Should match the cash drawer" />
+        <KpiTile label="UPI" value={formatPaise(sumPaise(live.filter((p) => p.method === 'upi'), 'keptPaise'))} caption="Should match the bank statement" />
+        <KpiTile label="Online" value={formatPaise(sumPaise(live.filter((p) => p.method === 'online'), 'keptPaise'))} caption="Paid on the website; settles to the bank" />
         <KpiTile label="Bookings outstanding" value={formatPaise(sumPaise(dues, 'outstandingPaise'))} caption={`${dues.length} unpaid ${dues.length === 1 ? 'booking' : 'bookings'}`} />
       </KpiRow>
 
@@ -168,7 +219,10 @@ export default function Payments() {
                               </td>
                               <td>{p.customerName}</td>
                               <td>{PAYMENT_LABELS[p.method]}</td>
-                              <td>{p.voidedAt ? <StatusBadge status="Cancelled">{stateOf(p)} {formatPaise(p.amountPaise)}</StatusBadge> : formatPaise(p.amountPaise)}</td>
+                              <td>
+                                {p.voidedAt ? <StatusBadge status="Cancelled">{stateOf(p)} {formatPaise(p.amountPaise)}</StatusBadge> : formatPaise(p.amountPaise)}
+                                {!p.voidedAt && p.refundedPaise > 0 && <span className="data-table__sub">{formatPaise(p.refundedPaise)} refunded</span>}
+                              </td>
                             </tr>
                           );
                         })}
@@ -242,6 +296,12 @@ export default function Payments() {
                 {receipt.reference ? ` · ${receipt.reference}` : ''}
                 <br />
                 Amount: {formatPaise(receipt.amountPaise)}
+                {receipt.refundedPaise > 0 && !receipt.voidedAt && (
+                  <>
+                    <br />
+                    Refunded {formatPaise(receipt.refundedPaise)} on {formatInstant(receipt.refundedAt)} IST · {formatPaise(receipt.amountPaise - receipt.refundedPaise)} kept
+                  </>
+                )}
                 {receipt.voidedAt && (
                   <>
                     <br />
@@ -251,7 +311,7 @@ export default function Payments() {
               </p>
               <div className="detail-panel__actions">
                 <Button onClick={() => setDialog({ type: 'receipt' })}>View receipt</Button>
-                {!receipt.voidedAt && can('payments.void') && receipt.method === 'online' && <Button onClick={() => setDialog({ type: 'refund' })}>Refund</Button>}
+                {refundable(receipt) > 0 && can('payments.void') && receipt.method === 'online' && <Button onClick={() => setDialog({ type: 'refund' })}>{receipt.refundedPaise > 0 ? 'Refund more' : 'Refund'}</Button>}
                 {!receipt.voidedAt && can('payments.void') && receipt.method !== 'online' && <Button onClick={() => setDialog({ type: 'void' })}>Void receipt</Button>}
               </div>
             </Panel>
@@ -287,21 +347,7 @@ export default function Payments() {
             </div>
           </ConfirmDialog>
         )}
-        {dialog?.type === 'refund' && receipt && (
-          <ActionDialog
-            key="refund"
-            title={`Refund ${receipt.receiptNo}?`}
-            description={`${formatPaise(receipt.amountPaise)} goes back to the customer through the payment gateway, usually within 5–7 working days. The booking or membership isn’t cancelled: do that separately if needed.`}
-            label="Refund payment"
-            reasonLabel="Reason"
-            reasonRequired
-            onClose={close}
-            onConfirm={async (reason) => {
-              await api(`/payments/${receipt.id}/refund`, { method: 'POST', body: { reason } });
-              changed(`${receipt.receiptNo} refunded.`);
-            }}
-          />
-        )}
+        {dialog?.type === 'refund' && receipt && <RefundDialog key="refund" receipt={receipt} onClose={close} onDone={changed} />}
         {dialog?.type === 'void' && receipt && (
           <ActionDialog
             key="void"

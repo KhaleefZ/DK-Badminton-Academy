@@ -10,7 +10,10 @@ import { GatewayError, onlinePayments } from './gateway.js';
 // How long after an order the cron keeps asking the gateway about it, and how often.
 const SWEEP_AFTER_MS = 2 * 60_000;
 const SWEEP_FOR_MS = 45 * 60_000;
-const SWEEP_BATCH = 5;
+// Orders checked per run. Settling one takes 10–15 database queries and Cloudflare's free plan allows
+// 50 per run, so 2 leaves room. Runs alternate with emails: 2 orders every 2 minutes is plenty,
+// since the webhook and the website's own check settle almost every payment first.
+export const SWEEP_BATCH = 2;
 
 const LABELS = { cashfree: 'Cashfree', razorpay: 'Razorpay' } as const;
 
@@ -211,17 +214,38 @@ async function refundWithoutReceipt(gateway: Gateway, paid: Paid, about: { booki
   }
 }
 
-/** Refunds one online receipt in full. Used automatically above and by staff from the admin panel. */
-export async function refundPayment(gateway: Gateway, receipt: typeof payments.$inferSelect, reason: string, staffId: string | null) {
+/**
+ * Refunds an online receipt through the gateway: in full by default, or part of it (the policy's 50%
+ * refund for a late cancellation). Can be repeated until nothing is left. Once fully refunded the
+ * receipt is also voided, so totals leave it out; a partly refunded one counts what was kept.
+ * Used automatically above (always in full) and by staff from the admin panel.
+ */
+export async function refundPayment(gateway: Gateway, receipt: typeof payments.$inferSelect, reason: string, staffId: string | null, amountPaise?: number) {
   if (receipt.method !== 'online' || !receipt.gatewayPaymentId || !receipt.gatewayOrderId) throw new GatewayError('Only an online payment can be refunded here. Give cash or UPI back in person and void the receipt.');
-  if (receipt.refundedAt) throw new GatewayError('This payment has already been refunded.');
+  const left = receipt.amountPaise - receipt.refundedPaise;
+  if (left <= 0 || (receipt.voidedAt && receipt.refundedAt)) throw new GatewayError('This payment has already been refunded.');
+  const amount = amountPaise ?? left;
+  // A voided receipt already counts for nothing, so it can only be refunded whole.
+  if (receipt.voidedAt && amount !== left) throw new GatewayError('A voided receipt can only be refunded in full.');
+  if (!Number.isInteger(amount) || amount <= 0) throw new GatewayError('Enter an amount above ₹0 to refund.');
+  if (amount > left) throw new GatewayError(`That’s more than is left to refund (₹${left / 100}).`);
   if (receipt.gateway !== gateway.name) throw new GatewayError(`This payment went through ${LABELS[receipt.gateway!]}, which isn’t the gateway set up now. Refund it from that dashboard.`);
-  const { refundId } = await gateway.refund({ orderId: receipt.gatewayOrderId, paymentId: receipt.gatewayPaymentId, amountPaise: receipt.amountPaise, reason, reference: `rf-${receipt.receiptNo}` });
+  // Each refund needs its own reference; the running total keeps a repeat of the same request from matching an earlier one.
+  const reference = `rf-${receipt.receiptNo}-${receipt.refundedPaise + amount}`.slice(0, 40);
+  const { refundId } = await gateway.refund({ orderId: receipt.gatewayOrderId, paymentId: receipt.gatewayPaymentId, amountPaise: amount, reason, reference });
   const now = new Date();
-  const change = { refundedAt: now, gatewayRefundId: refundId, voidedAt: receipt.voidedAt ?? now, voidReason: receipt.voidReason ?? `Refunded: ${reason}`, voidedBy: receipt.voidedBy ?? staffId };
+  const refundedPaise = receipt.refundedPaise + amount;
+  const full = refundedPaise === receipt.amountPaise;
+  const change = {
+    refundedPaise,
+    refundedAt: now,
+    gatewayRefundId: refundId,
+    ...(full ? { voidedAt: receipt.voidedAt ?? now, voidReason: receipt.voidReason ?? `Refunded: ${reason}`, voidedBy: receipt.voidedBy ?? staffId } : {}),
+  };
   await db.batch([
-    db.update(payments).set(change).where(eq(payments.id, receipt.id)),
-    auditEntry({ action: 'payment.refunded', actorStaffId: staffId, entityType: 'payment', entityId: receipt.id, newValues: { refundId, reason } }),
+    // Only if nobody refunded it meanwhile, so two staff pressing Refund together can't both count.
+    db.update(payments).set(change).where(and(eq(payments.id, receipt.id), eq(payments.refundedPaise, receipt.refundedPaise))),
+    auditEntry({ action: full ? 'payment.refunded' : 'payment.partly_refunded', actorStaffId: staffId, entityType: 'payment', entityId: receipt.id, newValues: { refundId, reason, amountPaise: amount, refundedPaise } }),
   ]);
   return { ...receipt, ...change };
 }
@@ -254,7 +278,7 @@ export async function sweepGatewayOrders(now = new Date()): Promise<number> {
   const due = [
     ...(await db.select({ id: bookings.id, orderId: bookings.gatewayOrderId }).from(bookings).where(recent(bookings)).limit(SWEEP_BATCH)).map((r) => ({ ...r, table: bookings })),
     ...(await db.select({ id: memberships.id, orderId: memberships.gatewayOrderId }).from(memberships).where(recent(memberships)).limit(SWEEP_BATCH)).map((r) => ({ ...r, table: memberships })),
-  ];
+  ].slice(0, SWEEP_BATCH);
   for (const row of due) {
     await db.update(row.table).set({ gatewayCheckedAt: now }).where(eq(row.table.id, row.id));
     try {

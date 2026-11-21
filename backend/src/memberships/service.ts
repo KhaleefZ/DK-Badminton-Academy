@@ -137,7 +137,7 @@ export const nextPeriod = (endsOn: string, today = venueToday()) => {
 
 export const periodPaid = async (periodId: string) => {
   const [row] = await db
-    .select({ paid: sql<number>`coalesce(sum(${payments.amountPaise}), 0)` })
+    .select({ paid: sql<number>`coalesce(sum(${payments.amountPaise} - ${payments.refundedPaise}), 0)` })
     .from(payments)
     .where(and(eq(payments.periodId, periodId), isNull(payments.voidedAt)));
   return row!.paid;

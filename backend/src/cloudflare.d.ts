@@ -8,6 +8,11 @@ declare module 'cloudflare:workers' {
     LOGIN_LIMIT: RateLimitBinding;
     RESET_LIMIT: RateLimitBinding;
     PUBLIC_WRITE_LIMIT: RateLimitBinding;
+    // Weekly database backup (src/backup.ts). Optional: backups are skipped until they're all set.
+    BACKUPS?: R2Bucket;
+    BACKUP_ACCOUNT_ID?: string;
+    BACKUP_DATABASE_ID?: string;
+    BACKUP_API_TOKEN?: string;
   };
 }
 

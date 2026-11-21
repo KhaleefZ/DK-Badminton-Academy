@@ -369,6 +369,32 @@ describe('emails', () => {
   });
 });
 
+describe('WhatsApp renewal reminders', () => {
+  it('gives staff a WhatsApp chat with the reminder typed, even without an email, and logs it when opened', async () => {
+    const batch = await addBatch();
+    const m = await join(batch, { email: '' });
+    const { body } = await admin('get', `/memberships/${m.id}`).expect(200);
+    const url = new URL(body.membership.whatsappReminderUrl);
+    expect(url.origin + url.pathname).toBe('https://wa.me/919876543210');
+    const text = url.searchParams.get('text')!;
+    expect(text).toContain('Hi Asha, this is DK Badminton Academy.');
+    expect(text).toContain(m.membershipNo);
+    expect(text).toMatch(/ends on \d{1,2} \w{3} \d{4}/);
+    expect(text).toContain(membershipLink(m.id));
+
+    await admin('post', `/memberships/${m.id}/whatsapp-opened`, desk).expect(204);
+    const [logged] = await db.select().from(messages);
+    expect(logged).toMatchObject({ channel: 'whatsapp', template: 'membership_whatsapp', recipient: '98765 43210', status: 'sent', membershipId: m.id });
+  });
+
+  it('offers no reminder once a membership is cancelled', async () => {
+    const batch = await addBatch();
+    const m = await join(batch);
+    await admin('post', `/memberships/${m.id}/cancel`).send({}).expect(200);
+    expect((await admin('get', `/memberships/${m.id}`).expect(200)).body.membership.whatsappReminderUrl).toBeNull();
+  });
+});
+
 describe('joining on the website', () => {
   const guest = { name: 'Web Person', phone: '+91 98765 43210', email: 'web@example.com' };
   const joinBatch = (batch: { id: string }, over = {}) => site('post', '/memberships').send({ ...guest, planId: plan.id, batchId: batch.id, startsOn: START, ...over });
