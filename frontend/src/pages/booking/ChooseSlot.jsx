@@ -57,11 +57,12 @@ export default function ChooseSlot() {
                 <div className="court-picker__options" role="radiogroup" aria-labelledby="court-label">
                   {courts.map((c) => {
                     const selected = c.id === court?.id;
+                    // 'No times left', not 'Fully booked': a slot may be gone because it's past, not booked.
                     const free = c.slots.filter((s, i) => usable(c.slots, i, minCount)).length;
                     return (
                       <button key={c.id} type="button" role="radio" aria-checked={selected} className={`court-option${selected ? ' is-selected' : ''}`} onClick={() => setCourt(c.id)}>
                         <span className="court-option__name">{c.name}</span>
-                        <span className="court-option__meta">{free === 0 ? 'Fully booked' : `${durationLabel(free * 30)} free`}</span>
+                        <span className="court-option__meta">{free === 0 ? 'No times left' : `${durationLabel(free * 30)} free`}</span>
                       </button>
                     );
                   })}

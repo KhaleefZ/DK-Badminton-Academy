@@ -10,21 +10,37 @@ import { FilterBar, SearchFilter, SelectFilter } from '../components/Filters';
 import { useCan } from '../auth/AuthContext';
 import { useWorkspace } from '../store/WorkspaceContext';
 import { api } from '../lib/api';
-import { formatInstant, MESSAGE_LABELS, MESSAGE_STATUS, MESSAGE_TONES } from '../lib/format';
+import { CHANNEL_LABELS, formatInstant, MESSAGE_LABELS, MESSAGE_STATUS, MESSAGE_TONES, whatsappChatUrl } from '../lib/format';
 import { useResource } from '../lib/useResource';
+import ViewTabs from '../components/ViewTabs';
+import { INBOX } from '../layout/sections';
 
 const STATUS_OPTIONS = [{ value: 'all', label: 'All messages' }, ...Object.entries(MESSAGE_STATUS).map(([value, label]) => ({ value, label }))];
+const CHANNEL_OPTIONS = [{ value: 'all', label: 'WhatsApp and email' }, ...Object.entries(CHANNEL_LABELS).map(([value, label]) => ({ value, label }))];
+
+/** The message without its private-link lines, for staff to send by hand in WhatsApp. */
+const chatText = (body) =>
+  body
+    .split('\n')
+    .filter((line) => !line.includes('{{link}}') && !line.startsWith('Keep this link private'))
+    .join('\n')
+    .replace(/\n{3,}/g, '\n\n')
+    .trim();
 
 export default function Messages() {
   const { notify } = useWorkspace();
   const can = useCan();
   const [query, setQuery] = useState('');
   const [status, setStatus] = useState('all');
+  const [channel, setChannel] = useState('all');
   const search = new URLSearchParams();
   if (query.trim()) search.set('q', query.trim());
   if (status !== 'all') search.set('status', status);
+  if (channel !== 'all') search.set('channel', channel);
   const { data, error, reload } = useResource(`/messages?${search}`);
   const rows = data?.messages ?? [];
+  // WhatsApp messages that were sent by email instead, so staff don't try them again.
+  const replaced = new Set(rows.map((m) => m.fallbackOf).filter(Boolean));
   const pager = usePagination(rows, 12);
 
   const act = async (message, action, done) => {
@@ -39,10 +55,12 @@ export default function Messages() {
 
   return (
     <>
-      <PageHeader title="Messages" subtitle="Every email the system sends or is waiting to send." action={can('settings.manage') ? <Button to="/settings">Sender settings</Button> : undefined} />
+      <PageHeader title={INBOX.label} subtitle="Every WhatsApp message and email the system sends or is waiting to send." action={can('settings.manage') ? <Button to="/settings">WhatsApp and email settings</Button> : undefined} />
+      <ViewTabs tabs={INBOX.tabs} label="Enquiries and messages" />
 
       <FilterBar>
         <SearchFilter label="Search recipient or subject" value={query} onChange={setQuery} />
+        <SelectFilter label="Channel" value={channel} onChange={setChannel} options={CHANNEL_OPTIONS} />
         <SelectFilter label="Status" value={status} onChange={setStatus} options={STATUS_OPTIONS} />
       </FilterBar>
 
@@ -71,17 +89,22 @@ export default function Messages() {
                     <tr key={m.id}>
                       <td className="data-table__key">
                         {MESSAGE_LABELS[m.template] ?? m.template}
-                        <span className="data-table__sub">{m.subject}</span>
+                        <span className="data-table__sub">
+                          {CHANNEL_LABELS[m.channel] ?? m.channel}
+                          {m.audience === 'owner' ? ' · to owner' : ''}
+                          {m.fallbackOf ? ' · instead of WhatsApp' : ''} · {m.subject}
+                        </span>
                       </td>
                       <td>{m.recipient}</td>
                       <td>{formatInstant(m.sentAt ?? m.createdAt)}</td>
                       <td>
                         <StatusBadge tone={MESSAGE_TONES[m.status]}>{MESSAGE_STATUS[m.status]}</StatusBadge>
                         {m.lastError && <span className="data-table__sub">{m.lastError}</span>}
+                        {replaced.has(m.id) && <span className="data-table__sub">Sent by email instead.</span>}
                       </td>
                       <td>
                         <div className="staff-actions">
-                          {m.channel === 'email' && (m.status === 'failed' || m.status === 'queued') && (
+                          {(m.status === 'failed' || m.status === 'queued') && !replaced.has(m.id) && (m.channel === 'email' || m.status === 'failed') && (
                             <button type="button" className="link-button small" onClick={() => act(m, 'retry', 'Trying again shortly.')}>
                               {m.status === 'failed' ? 'Try again' : 'Send now'}
                             </button>
@@ -90,6 +113,11 @@ export default function Messages() {
                             <button type="button" className="link-button small" onClick={() => act(m, 'cancel', 'Message cancelled.')}>
                               Cancel
                             </button>
+                          )}
+                          {m.channel === 'whatsapp' && m.audience === 'customer' && m.status === 'failed' && !replaced.has(m.id) && (
+                            <a className="link-button small" href={whatsappChatUrl(m.recipient, chatText(m.body))} target="_blank" rel="noreferrer">
+                              Open in WhatsApp
+                            </a>
                           )}
                         </div>
                       </td>

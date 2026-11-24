@@ -32,7 +32,6 @@ export const DB_ERRORS = {
   lastOwner: 'DK002',
   exclusionViolation: 'DK003',
   batchFull: 'DK004',
-  referralUsedUp: 'DK005',
   overpayment: 'DK006',
   uniqueViolation: 'UNIQUE',
   foreignKeyViolation: 'FOREIGN_KEY',

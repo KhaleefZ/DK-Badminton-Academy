@@ -23,16 +23,18 @@ const FAKE_SECRET = 'fake-webhook-secret';
 /** Behaves like a real gateway: orders, payments made "at the gateway", signed webhooks, refunds that can fail. */
 function fakeGateway() {
   const orders = new Map<string, { amountPaise: number; paid?: { paymentId: string; amountPaise: number } }>();
-  const state = { keysWork: true, refundsWork: true, refunds: [] as { paymentId: string; amountPaise: number }[], made: 0 };
+  const state = { keysWork: true, refundsWork: true, down: false, refunds: [] as { paymentId: string; amountPaise: number }[], made: 0 };
   const factory = (keys: GatewayKeys): Gateway => ({
     name: keys.gateway,
     live: keys.live,
     async createOrder(order) {
+      if (state.down) throw new GatewayError('The payment keys were refused (start the payment). Check them in Settings.');
       const orderId = `order_${(state.made += 1)}`;
       orders.set(orderId, { amountPaise: order.amountPaise });
       return { orderId, checkout: { gateway: 'razorpay', keyId: keys.keyId, orderId, amountPaise: order.amountPaise, currency: 'INR', description: order.description, prefill: { name: order.customer.name, contact: order.customer.phone } } };
     },
     async fetchOrder(orderId) {
+      if (state.down) throw new GatewayError('The payment gateway couldn’t look up the payment: HTTP 503');
       const paid = orders.get(orderId)?.paid;
       return paid ? { status: 'paid', ...paid } : { status: 'pending' };
     },
@@ -334,5 +336,30 @@ describe('the real gateways’ signature checks', () => {
 
   it('Razorpay: refuses test keys in Live mode before calling anyone', async () => {
     await expect(razorpayGateway({ ...keys('razorpay'), keyId: 'rzp_test_x', live: true }).checkCredentials()).rejects.toThrow(/test keys/);
+  });
+});
+
+describe('when Razorpay is down or refuses (verified 23 Nov 2026)', () => {
+  it('Pay shows the customer a plain "try again" instead of a server error, and keeps the hold', async () => {
+    await settings().expect(200);
+    const { token } = await hold();
+    fake.state.down = true;
+    const res = await site('post', `/bookings/${token}/checkout`).send({}).expect(502);
+    expect(res.body.error).toEqual({ code: 'PAYMENT_UNAVAILABLE', message: 'Online payment couldn’t start just now. Please try again in a minute, or contact the academy.' });
+    expect((await site('get', `/bookings/${token}`).expect(200)).body.booking.status).toBe('pending_payment');
+    fake.state.down = false;
+    expect((await site('post', `/bookings/${token}/checkout`).send({}).expect(200)).body.checkout.orderId).toBeTruthy();
+  });
+
+  it('"check my payment" waits quietly while the gateway is unreachable, then confirms once it answers', async () => {
+    await settings().expect(200);
+    const { token } = await hold();
+    const { checkout } = (await site('post', `/bookings/${token}/checkout`).send({}).expect(200)).body;
+    fake.payAt(checkout.orderId);
+    fake.state.down = true;
+    expect((await site('post', `/bookings/${token}/check`).send({}).expect(200)).body.booking.status).toBe('pending_payment');
+    fake.state.down = false;
+    expect((await site('post', `/bookings/${token}/check`).send({}).expect(200)).body.booking.status).toBe('active');
+    expect(await db.$count(payments)).toBe(1);
   });
 });

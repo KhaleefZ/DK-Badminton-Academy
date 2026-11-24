@@ -3,7 +3,11 @@ dist/
 .env
 .env.local
 .DS_Store
+# Tools: gstack (any folder), graphify's code graph
 .gstack/
 graphify-out/
 .wrangler/
 .dev.vars
+
+# Private working docs (plans, deploy runbook, hosting notes). Kept on disk, not in git: back them up yourself.
+docs/

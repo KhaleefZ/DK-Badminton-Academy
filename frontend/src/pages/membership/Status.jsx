@@ -95,7 +95,6 @@ export default function Status() {
                 <span>First month</span>
                 <span className="summary-card__amount">{formatPaise(m.amountPaise)}</span>
               </div>
-              {m.discountPaise > 0 && <p className="fine muted">Includes {formatPaise(m.discountPaise)} referral discount. Then {formatPaise(m.monthlyPaise)} a month.</p>}
             </section>
             {waiting && (
               <>
@@ -110,7 +109,6 @@ export default function Status() {
               </>
             )}
             {confirmed && <Notice>{fill(text.numberNotice, { membershipNo: m.membershipNo })}</Notice>}
-            {confirmed && m.referralCode && <Notice>{fill(text.referralNotice, { code: m.referralCode })}</Notice>}
             {!confirmed && !waiting && <p className="lead">{text.nothingCharged}</p>}
             <div className="button-row">
               {!confirmed && !waiting && <Button to="/pricing#plans">{text.seeButton}</Button>}

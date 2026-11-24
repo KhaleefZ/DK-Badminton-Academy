@@ -2,8 +2,8 @@ import { and, asc, eq, gt, inArray, isNotNull, isNull, lt, notExists, or, sql } 
 import { db, dbErrorCode, DB_ERRORS, previousChanged } from '../db/client.js';
 import { bookings, courtReservations, customers, membershipPeriods, memberships, paymentIssues, payments } from '../db/schema.js';
 import { auditEntry, auditIfChanged } from '../lib/audit.js';
-import { ensureMemberCode, settleReferral } from '../memberships/referrals.js';
-import { enqueueBookingMessage, enqueueMembershipMessage, enqueueStaffBookingAlert, enqueueStaffMembershipAlert } from '../messages/queue.js';
+import { AppError } from '../lib/errors.js';
+import { notifyNewBooking, notifyNewMembership, notifyOwnerRefund } from '../messages/notify.js';
 import type { Gateway, NewOrder } from './gateway.js';
 import { GatewayError, onlinePayments } from './gateway.js';
 
@@ -53,7 +53,16 @@ export async function startMembershipCheckout(gateway: Gateway, membership: Memb
 
 async function startCheckout(gateway: Gateway, notifyUrl: string | undefined, order: Omit<NewOrder, 'notifyUrl'> & { save: (orderId: string) => PromiseLike<unknown> }) {
   const { save, ...details } = order;
-  const created = await gateway.createOrder({ ...details, notifyUrl });
+  let created;
+  try {
+    created = await gateway.createOrder({ ...details, notifyUrl });
+  } catch (err) {
+    if (!(err instanceof GatewayError)) throw err;
+    // The gateway's own reason (keys refused, gateway down) is for staff, in the Worker logs. The customer
+    // gets a plain retry message, and the hold stays so they can try again before it runs out.
+    console.error(`Payment couldn’t start (${details.reference}):`, err.message);
+    throw new AppError(502, 'PAYMENT_UNAVAILABLE', 'Online payment couldn’t start just now. Please try again in a minute, or contact the academy.');
+  }
   await save(created.orderId);
   return created.checkout;
 }
@@ -128,8 +137,7 @@ async function settleBooking(gateway: Gateway, booking: Booking, paid: Paid): Pr
       auditIfChanged({ action: 'booking.confirmed_online', entityType: 'booking', entityId: booking.id }),
     ]);
     if (confirmed.length) {
-      await enqueueBookingMessage(booking.id, 'confirmed');
-      await enqueueStaffBookingAlert(booking.id);
+      await notifyNewBooking(booking.id);
       return 'confirmed';
     }
     const [now] = await db.select({ status: bookings.status }).from(bookings).where(eq(bookings.id, booking.id));
@@ -166,10 +174,7 @@ async function settleMembership(gateway: Gateway, membership: Membership, paid: 
       auditIfChanged({ action: 'membership.confirmed_online', entityType: 'membership', entityId: membership.id }),
     ]);
     if (confirmed.length) {
-      await ensureMemberCode(membership.id);
-      await settleReferral(membership.id);
-      await enqueueMembershipMessage(membership.id, 'confirmed');
-      await enqueueStaffMembershipAlert(membership.id);
+      await notifyNewMembership(membership.id);
       return 'confirmed';
     }
     const [now] = await db.select({ status: memberships.status }).from(memberships).where(eq(memberships.id, membership.id));
@@ -193,10 +198,12 @@ async function refundReceipt(gateway: Gateway, receiptId: string, why: string, a
   try {
     await refundPayment(gateway, receipt!, why.split(',')[0]!, null);
     await flag({ ...about, paymentId: receiptId, amountPaise: receipt!.amountPaise, message: why });
+    await notifyOwnerRefund({ amountPaise: receipt!.amountPaise, receipt: receipt!.receiptNo, ...about, periodId: receipt!.periodId, reason: why, by: null });
     return 'refunded';
   } catch (err) {
     if (!(err instanceof GatewayError)) throw err;
     await flag({ ...about, paymentId: receiptId, amountPaise: receipt!.amountPaise, message: `${why.replace(/, so it was refunded\.$/, '.')} The automatic refund failed (${err.message}). Refund it from the gateway dashboard, then mark this done.` });
+    await notifyOwnerRefund({ amountPaise: receipt!.amountPaise, receipt: receipt!.receiptNo, ...about, periodId: receipt!.periodId, reason: why.replace(/, so it was refunded\.$/, '.'), by: null, failed: true });
     return 'needs_attention';
   }
 }
@@ -206,10 +213,12 @@ async function refundWithoutReceipt(gateway: Gateway, paid: Paid, about: { booki
   try {
     await gateway.refund({ orderId: paid.orderId, paymentId: paid.paymentId, amountPaise: paid.amountPaise, reason: 'Paid twice', reference: `rf-${paid.paymentId}`.slice(0, 40) });
     await flag({ ...about, amountPaise: paid.amountPaise, message: why });
+    await notifyOwnerRefund({ amountPaise: paid.amountPaise, receipt: paid.paymentId, ...about, reason: why, by: null });
     return 'refunded';
   } catch (err) {
     if (!(err instanceof GatewayError)) throw err;
     await flag({ ...about, amountPaise: paid.amountPaise, message: `${why.replace(/, so a second payment was refunded\.$/, '.')} A second payment (${paid.paymentId}) arrived and the automatic refund failed (${err.message}). Refund it from the gateway dashboard.` });
+    await notifyOwnerRefund({ amountPaise: paid.amountPaise, receipt: paid.paymentId, ...about, reason: why.replace(/, so a second payment was refunded\.$/, '.'), by: null, failed: true });
     return 'needs_attention';
   }
 }
@@ -257,6 +266,20 @@ export async function syncOrder(gateway: Gateway, orderId: string): Promise<Sett
   const state = await gateway.fetchOrder(orderId);
   if (state.status !== 'paid') return 'pending';
   return settlePaidOrder(gateway, { orderId, paymentId: state.paymentId, amountPaise: state.amountPaise });
+}
+
+/**
+ * The customer's "check my payment" after checkout. If the gateway can't be reached, the page just
+ * keeps waiting: the webhook or the cron sweep settles the payment once the gateway answers.
+ */
+export async function checkOrderNow(gateway: Gateway, orderId: string): Promise<Settled | 'pending'> {
+  try {
+    return await syncOrder(gateway, orderId);
+  } catch (err) {
+    if (!(err instanceof GatewayError)) throw err;
+    console.error(`Payment check (${orderId}):`, err.message);
+    return 'pending';
+  }
 }
 
 /**

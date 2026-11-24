@@ -354,6 +354,7 @@
 .site-footer__legal {
   display: flex;
   flex-wrap: wrap;
+  align-items: baseline;
   justify-content: space-between;
   gap: var(--space-12);
   width: 100%;
@@ -362,6 +363,23 @@
 
 .site-footer__legal a {
   color: var(--accent-rally);
+}
+
+/* Pushed to the right of the bottom line, even when "Staff login" is hidden. */
+.site-footer__credit {
+  margin: 0 0 0 auto;
+  font-size: 12px;
+  opacity: 0.85;
+}
+
+.site-footer__credit a {
+  font-weight: 600;
+  text-decoration: none;
+}
+
+.site-footer__credit a:hover,
+.site-footer__credit a:focus-visible {
+  text-decoration: underline;
 }
 
 /* ---------- Concept photography ---------- */

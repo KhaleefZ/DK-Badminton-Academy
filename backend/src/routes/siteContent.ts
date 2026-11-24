@@ -8,7 +8,7 @@ import { AppError, invalid } from '../lib/errors.js';
 import { parseBody } from '../lib/validate.js';
 import { currentAuth, requirePasswordCurrent, requirePermission, requireSession } from '../middleware/auth.js';
 import { DEFAULT_CONTENT, readableContent, validContent } from '../site/content.js';
-import { photoKey, photos } from '../storage.js';
+import { deletePhotos, savePhoto } from '../storage.js';
 
 const MAX_IMAGE_BYTES = 5 * 1024 * 1024;
 // A photo uploaded but never saved into the website is only kept this long, in case the editor is still open.
@@ -56,7 +56,7 @@ async function removePhotos(ids: string[]): Promise<void> {
   for (let i = 0; i < ids.length; i += 90) {
     const chunk = ids.slice(i, i + 90);
     await db.delete(siteImages).where(inArray(siteImages.id, chunk));
-    await photos().delete(chunk.map(photoKey));
+    await deletePhotos(chunk);
   }
 }
 
@@ -110,7 +110,7 @@ export function siteContentRouter(): Router {
     await removePhotos(await photosUnusedBy(JSON.stringify(current?.content ?? {}), new Date(Date.now() - UNSAVED_IMAGE_HOURS * 3_600_000)));
     const id = crypto.randomUUID();
     // Stored first, so the list never names a photo that isn't there.
-    await photos().put(photoKey(id), data, { httpMetadata: { contentType } });
+    await savePhoto(id, data);
     await db.batch([
       db.insert(siteImages).values({ id, contentType, byteSize: data.length }),
       auditEntry({ action: 'website.image_uploaded', actorStaffId: currentAuth(req).staff.id, entityType: 'site_image', entityId: id, newValues: { contentType, byteSize: data.length }, req }),

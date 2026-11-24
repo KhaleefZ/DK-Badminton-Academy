@@ -1,14 +1,16 @@
 // Keeps the app inside Cloudflare's free plan: at most 50 D1 queries per request or cron run, and no
-// query that reads a whole table on paths that run all the time. Also covers the weekly R2 backup.
+// query that reads a whole table on paths that run all the time. Also checks nothing needs a card (no R2).
 import { createHmac } from 'node:crypto';
+import { readFileSync } from 'node:fs';
 import { isNotNull } from 'drizzle-orm';
 import request from 'supertest';
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
-import { BACKUPS_KEPT, backUpDatabase, backupKey } from '../src/backup.js';
 import { db, useDatabase } from '../src/db/client.js';
 import { bookings, messageSettings, messages, payments } from '../src/db/schema.js';
 import { addDays, venueToday } from '../src/lib/time.js';
-import { EMAIL_BATCH_SIZE, processMessages } from '../src/messages/queue.js';
+import { EMAIL_BATCH_SIZE, processMessages, WHATSAPP_BATCH_SIZE } from '../src/messages/queue.js';
+import { useTestWhatsapp } from '../src/messages/whatsapp.js';
+import { encrypt } from '../src/lib/secret.js';
 import { useTestGateway, type Gateway, type GatewayKeys } from '../src/payments/gateway.js';
 import { SWEEP_BATCH, sweepGatewayOrders } from '../src/payments/settle.js';
 import { addStaff, ORIGIN, PASSWORD, signIn, testApp } from './helpers.js';
@@ -159,6 +161,32 @@ describe('each cron run stays inside the free plan', () => {
   });
 });
 
+describe('WhatsApp stays inside the free plan', () => {
+  it('a run sending a full WhatsApp batch and a full email batch stays within budget', async () => {
+    let metaCalls = 0;
+    useTestWhatsapp(async () => ((metaCalls += 1), Response.json({ messages: [{ id: `wamid.${metaCalls}` }] })));
+    try {
+      await db.update(messageSettings).set({ emailEnabled: true, whatsappEnabled: true, whatsappPhoneNumberId: '123', whatsappTokenEncrypted: encrypt('t'), ownerWhatsappNumbers: ['9000000001', '9000000002'] });
+      // Settling paid bookings now also writes the customer's WhatsApp and the owner alerts.
+      await paidOrders(4);
+      await db.update(bookings).set({ gatewayOrderAt: new Date(Date.now() - 3 * 60_000) }).where(isNotNull(bookings.gatewayOrderId));
+      const sweep = await cost(() => sweepGatewayOrders());
+      expect(sweep.queries).toBeLessThanOrEqual(BUDGET);
+      await sweepGatewayOrders();
+      // Add emails as well, so both the WhatsApp and the email pass are full.
+      for (let i = 0; i < EMAIL_BATCH_SIZE; i += 1) await db.insert(messages).values({ template: 'enquiry_received', recipient: `p${i}@example.com`, subject: 's', body: 'b' });
+      const run = await cost(() => processMessages({ send: async () => {} }));
+      expect(run.result.whatsapp.sent).toBe(WHATSAPP_BATCH_SIZE);
+      expect(run.result.sent).toBe(EMAIL_BATCH_SIZE);
+      expect(metaCalls).toBe(WHATSAPP_BATCH_SIZE);
+      expect(run.queries).toBeLessThanOrEqual(BUDGET);
+    } finally {
+      useTestWhatsapp(null);
+      await db.update(messageSettings).set({ whatsappEnabled: false, whatsappPhoneNumberId: null, whatsappTokenEncrypted: null, ownerWhatsappNumbers: null });
+    }
+  });
+});
+
 describe('queries that run all the time use an index, not a whole-table read', () => {
   const plan = async (sql: string) => {
     const { results } = await (db as any).$client.prepare(`EXPLAIN QUERY PLAN ${sql}`).all();
@@ -176,73 +204,49 @@ describe('queries that run all the time use an index, not a whole-table read', (
   });
 });
 
-/* ---------- Weekly backup ---------- */
+/* ---------- Nothing that needs a card ---------- */
 
-function fakeBucket(keys: string[] = []) {
-  const stored = new Map<string, unknown>(keys.map((k) => [k, 'old']));
-  return {
-    stored,
-    async put(key: string, body: unknown) {
-      stored.set(key, body);
-    },
-    async list({ prefix }: { prefix: string }) {
-      return { objects: [...stored.keys()].filter((k) => k.startsWith(prefix)).map((key) => ({ key })) };
-    },
-    async delete(remove: string[]) {
-      for (const key of remove) stored.delete(key);
-    },
-  };
-}
+describe('Cloudflare setup needs no card (verified 23 Nov 2026)', () => {
+  const config = JSON.parse(readFileSync('wrangler.jsonc', 'utf8').replace(/^\s*\/\/.*$/gm, '')) as Record<string, any>;
 
-/** Answers like the D1 export API: started, still running once, then ready with a download link. */
-function fakeCloudflare(steps: object[] = [{ at_bookmark: 'bm1', status: 'active' }, { status: 'active' }, { status: 'complete', signed_url: 'https://download.example/dump.sql', filename: 'dump.sql' }]) {
-  const calls: { url: string; body?: unknown; auth?: string | null }[] = [];
-  let step = 0;
-  const fetcher = async (url: string, init?: RequestInit) => {
-    calls.push({ url, body: init?.body ? JSON.parse(String(init.body)) : undefined, auth: new Headers(init?.headers).get('authorization') });
-    if (url.startsWith('https://download.example/')) return new Response('CREATE TABLE x (id);', { headers: { 'content-length': '20' } });
-    return Response.json({ success: true, result: steps[step++] });
-  };
-  return { calls, fetcher };
-}
-
-const backupEnv = (bucket: ReturnType<typeof fakeBucket>) => ({ BACKUPS: bucket as never, BACKUP_ACCOUNT_ID: 'acc1', BACKUP_DATABASE_ID: 'db1', BACKUP_API_TOKEN: 'token1' });
-const noPause = async () => {};
-
-describe('weekly backup to R2', () => {
-  it('exports the database through the API and stores the file under the date', async () => {
-    const bucket = fakeBucket();
-    const cf = fakeCloudflare();
-    const at = new Date('2026-11-21T21:30:00Z');
-    const key = await backUpDatabase(backupEnv(bucket), at, { fetcher: cf.fetcher, pause: noPause });
-    expect(key).toBe('database/dk-badminton-2026-11-21.sql');
-    expect(bucket.stored.has(key!)).toBe(true);
-    expect(cf.calls[0]).toMatchObject({ url: 'https://api.cloudflare.com/client/v4/accounts/acc1/d1/database/db1/export', body: { output_format: 'polling' }, auth: 'Bearer token1' });
-    expect(cf.calls[1]!.body).toEqual({ output_format: 'polling', current_bookmark: 'bm1' });
+  it('uses no R2 (which needs a card): photos are in Workers KV, part of the free plan', () => {
+    expect(config.r2_buckets).toBeUndefined();
+    expect(config.kv_namespaces).toEqual([expect.objectContaining({ binding: 'PHOTOS' })]);
   });
 
-  it('keeps only the newest copies', async () => {
-    const old = Array.from({ length: BACKUPS_KEPT + 3 }, (_, i) => backupKey(new Date(Date.UTC(2026, 0, 1 + i * 7))));
-    const bucket = fakeBucket(old);
-    await backUpDatabase(backupEnv(bucket), new Date('2026-11-21T21:30:00Z'), { fetcher: fakeCloudflare().fetcher, pause: noPause });
-    const left = [...bucket.stored.keys()].sort();
-    expect(left).toHaveLength(BACKUPS_KEPT);
-    expect(left.at(-1)).toBe('database/dk-badminton-2026-11-21.sql');
-    expect(left).not.toContain(old[0]);
+  it('keeps to the free plan’s 5 scheduled jobs per account, leaving room for other projects', () => {
+    expect(config.triggers.crons).toEqual(['* * * * *']);
   });
 
-  it('does nothing until it is set up', async () => {
-    const bucket = fakeBucket();
-    expect(await backUpDatabase({ BACKUPS: bucket as never }, new Date(), { fetcher: fakeCloudflare().fetcher, pause: noPause })).toBeNull();
-    expect(bucket.stored.size).toBe(0);
+  it('backs the database up weekly in GitHub Actions, kept privately for 90 days', () => {
+    const workflow = readFileSync('../.github/workflows/database-backup.yml', 'utf8');
+    expect(workflow).toContain("cron: '30 21 * * 6'");
+    expect(workflow).toContain(`wrangler@${JSON.parse(readFileSync('node_modules/wrangler/package.json', 'utf8')).version} d1 export ${config.d1_databases[0].database_name} --remote`);
+    expect(workflow).toContain('retention-days: 90');
   });
 
-  it('fails loudly, storing nothing, when the export or the token is refused', async () => {
-    const bucket = fakeBucket();
-    const refused = async () => Response.json({ success: false, errors: [{ message: 'Authentication error' }] }, { status: 403 });
-    await expect(backUpDatabase(backupEnv(bucket), new Date(), { fetcher: refused, pause: noPause })).rejects.toThrow(/Authentication error/);
-    const failing = fakeCloudflare([{ at_bookmark: 'bm1', status: 'active' }, { status: 'error', error: 'disk full' }]);
-    await expect(backUpDatabase(backupEnv(bucket), new Date(), { fetcher: failing.fetcher, pause: noPause })).rejects.toThrow(/disk full/);
-    expect(bucket.stored.size).toBe(0);
+  it('saves, serves and removes a photo through KV', async () => {
+    const { savePhoto, readPhoto, deletePhotos } = await import('../src/storage.js');
+    const id = crypto.randomUUID();
+    const bytes = new Uint8Array([0xff, 0xd8, 0xff, 1, 2, 3]);
+    await savePhoto(id, bytes);
+    expect(new Uint8Array((await readPhoto(id))!)).toEqual(bytes);
+    await deletePhotos([id]);
+    expect(await readPhoto(id)).toBeNull();
+  });
+});
+
+describe('searches stay inside D1’s 50-byte LIKE limit (audit 24 Nov 2026)', () => {
+  it('caps every search pattern at 50 bytes, even for long, escaped or Tamil text', async () => {
+    const { likeTerm, LIKE_PATTERN_MAX_BYTES } = await import('../src/lib/search.js');
+    const size = (s: string) => new TextEncoder().encode(s).length;
+    for (const q of ['a'.repeat(100), '%_'.repeat(50), 'சுப்ரமணியன் பேட்மிண்டன் அகாடமி கோயம்புத்தூர்', '98765 43210', '😀'.repeat(30)]) {
+      const pattern = likeTerm(q);
+      expect(size(pattern)).toBeLessThanOrEqual(LIKE_PATTERN_MAX_BYTES);
+      expect(pattern.startsWith('%') && pattern.endsWith('%')).toBe(true);
+      // Inside the outer %…%, every % and _ is escaped, so it matches only itself.
+      expect(pattern.slice(1, -1).replace(/\\[\\%_]/g, '')).not.toMatch(/[%_]/);
+    }
+    expect(likeTerm('50%_off')).toBe('%50\\%\\_off%');
   });
 });

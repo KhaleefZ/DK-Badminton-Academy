@@ -10,15 +10,16 @@ import { AppError, invalid, notFound } from '../lib/errors.js';
 import { instantAt, isDate, periodView, toMinutes } from '../lib/time.js';
 import { parseBody, UUID } from '../lib/validate.js';
 import { bookingToken } from '../messages/links.js';
-import { enqueueBookingMessage, enqueueEnquiryMessages, enqueueStaffBookingAlert } from '../messages/queue.js';
+import { enqueueEnquiryMessages } from '../messages/queue.js';
+import { notifyNewBooking } from '../messages/notify.js';
 import { publicMembershipRoutes } from './publicMemberships.js';
 import { publicSite } from '../site/content.js';
 import { availabilityFor, quote, releaseExpiredHolds } from '../schedule/availability.js';
 import { prepareReservation } from '../schedule/reservations.js';
 import { WEBSITE_NUMBER } from '../lib/customers.js';
-import { photoKey, photos } from '../storage.js';
+import { readPhoto } from '../storage.js';
 import { onlinePayments, paymentInfo, webhookUrl } from '../payments/gateway.js';
-import { startBookingCheckout, syncOrder } from '../payments/settle.js';
+import { startBookingCheckout, checkOrderNow } from '../payments/settle.js';
 
 const MAX_LIVE_HOLDS = 2;
 
@@ -126,8 +127,7 @@ async function confirmHeldBooking(bookingId: string, req: Request, method: 'onli
     ...(method && confirmed.amountPaise > 0 ? [db.insert(payments).values({ bookingId: confirmed.id, amountPaise: confirmed.amountPaise, method, reference: 'Test mode' })] : []),
     auditEntry({ action: 'booking.confirmed_online', entityType: 'booking', entityId: confirmed.id, req }),
   ]);
-  await enqueueBookingMessage(confirmed.id, 'confirmed');
-  await enqueueStaffBookingAlert(confirmed.id);
+  await notifyNewBooking(confirmed.id);
 }
 
 export function publicRouter({ writeLimiter }: { writeLimiter: RequestHandler }): Router {
@@ -151,11 +151,11 @@ export function publicRouter({ writeLimiter }: { writeLimiter: RequestHandler })
   router.get('/images/:id', async (req, res) => {
     if (!UUID.test(req.params.id)) throw notFound('Photo');
     const [image] = await db.select().from(siteImages).where(eq(siteImages.id, req.params.id));
-    const file = image ? await photos().get(photoKey(image.id)) : null;
+    const file = image ? await readPhoto(image.id) : null;
     if (!image || !file) throw notFound('Photo');
     // A new upload gets a new id, so a photo can be kept for good. Without the policy header browsers block it on the website.
     res.set({ 'Cache-Control': 'public, max-age=31536000, immutable', 'Cross-Origin-Resource-Policy': 'cross-origin', 'Content-Type': image.contentType });
-    res.send(Buffer.from(await file.arrayBuffer()));
+    res.send(Buffer.from(file));
   });
 
   router.get('/availability', async (req, res) => {
@@ -271,7 +271,7 @@ export function publicRouter({ writeLimiter }: { writeLimiter: RequestHandler })
     const online = await onlinePayments();
     const { booking } = await fullByToken(token);
     if (online.kind === 'gateway' && booking.gatewayOrderId && (booking.status === 'pending_payment' || booking.status === 'expired')) {
-      await syncOrder(online.gateway, booking.gatewayOrderId);
+      await checkOrderNow(online.gateway, booking.gatewayOrderId);
     }
     await releaseExpiredHolds();
     res.json({ booking: publicView(await fullByToken(token)) });

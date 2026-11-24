@@ -19,7 +19,6 @@ import { membershipsRouter } from './routes/memberships.js';
 import { messagesRouter } from './routes/messages.js';
 import { paymentsRouter } from './routes/payments.js';
 import { publicRouter } from './routes/public.js';
-import { referralsRouter } from './routes/referrals.js';
 import { reportsRouter } from './routes/reports.js';
 import { scheduleRouter } from './routes/schedule.js';
 import { searchRouter } from './routes/search.js';
@@ -49,7 +48,6 @@ const DB_ERROR_RESPONSES: Record<string, { code: string; message: string }> = {
   [DB_ERRORS.uniqueViolation]: { code: 'DUPLICATE', message: 'That email is already used by another staff account.' },
   [DB_ERRORS.exclusionViolation]: { code: 'SLOT_TAKEN', message: 'That court is already reserved for some of this time.' },
   [DB_ERRORS.batchFull]: { code: 'BATCH_FULL', message: 'That batch is full.' },
-  [DB_ERRORS.referralUsedUp]: { code: 'INVALID_REFERRAL', message: 'That referral code isn’t valid.' },
   [DB_ERRORS.overpayment]: { code: 'OVERPAYMENT', message: 'That’s more than is still owed. Refresh and check the balance.' },
 };
 
@@ -105,7 +103,6 @@ export function createApp({ loginLimitPerWindow = 50, resetLimitPerWindow = 10, 
   app.use('/search', searchRouter());
   app.use('/enquiries', enquiriesRouter());
   app.use('/memberships', membershipsRouter());
-  app.use('/referrals', referralsRouter());
   app.use('/messages', messagesRouter({ mailer }));
   app.use('/reports', reportsRouter());
   app.use('/site-content', siteContentRouter());

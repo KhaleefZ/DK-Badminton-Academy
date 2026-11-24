@@ -1,4 +1,4 @@
-import { eq } from 'drizzle-orm';
+import { eq, sql } from 'drizzle-orm';
 import request from 'supertest';
 import { beforeEach, describe, expect, it } from 'vitest';
 import { db } from '../src/db/client.js';
@@ -343,15 +343,15 @@ describe('states and search', () => {
   });
 });
 
-describe('emails', () => {
-  it('queues confirmed, renewed, reminder and cancelled, and fills in a working private link', async () => {
+describe('emails (the fallback while WhatsApp is off)', () => {
+  it('emails confirmed and renewed, nothing when cancelled, and fills in a working private link', async () => {
     const batch = await addBatch();
     const m = await join(batch);
     await admin('post', `/memberships/${m.id}/renew`).expect(200);
-    await admin('post', `/memberships/${m.id}/remind`, desk).expect(202);
     await admin('post', `/memberships/${m.id}/cancel`).send({}).expect(200);
     const rows = await db.select().from(messages).orderBy(messages.createdAt);
-    expect(rows.map((r) => r.template)).toEqual(['membership_confirmed', 'membership_renewed', 'membership_reminder', 'membership_cancelled']);
+    // A cancelled membership isn't messaged to the member (owner decision, 21 Nov 2026).
+    expect(rows.map((r) => r.template)).toEqual(['membership_confirmed', 'membership_renewed']);
     expect(rows[0]!.body).toContain('{{link}}');
     const sent: { text: string }[] = [];
     await processMessages({ send: async (e) => void sent.push(e) });
@@ -361,11 +361,11 @@ describe('emails', () => {
     expect(page.body.membership.membershipNo).toBe(m.membershipNo);
   });
 
-  it('sends nothing without an email', async () => {
+  it('sends nothing without an email, and the old email reminder is gone', async () => {
     const batch = await addBatch();
     const m = await join(batch, { email: '' });
     expect(await db.select().from(messages)).toEqual([]);
-    expect((await admin('post', `/memberships/${m.id}/remind`).expect(400)).body.error.code).toBe('NO_EMAIL');
+    await admin('post', `/memberships/${m.id}/remind`).expect(404);
   });
 });
 
@@ -461,6 +461,19 @@ describe('joining on the website', () => {
     expect((await joinBatch(batch).expect(409)).body.error.code).toBe('TOO_MANY_HOLDS');
     await site('get', '/memberships/wrong').expect(404);
   });
+
+  it('joins with a phone only (email is optional), and limits unpaid holds by phone', async () => {
+    const batch = await addBatch({ capacity: 6 });
+    const { body } = await joinBatch(batch, { email: '' }).expect(201);
+    const [held] = await db.select().from(memberships).where(eq(memberships.status, 'pending_payment'));
+    expect(held).toMatchObject({ email: null, phone: '9876543210' });
+    expect(body.token).toBeTruthy();
+    await joinBatch(batch, { email: undefined }).expect(201);
+    // A third hold for the same phone is refused, even with a different (or no) email.
+    expect((await joinBatch(batch, { email: 'other@example.com' }).expect(409)).body.error.code).toBe('TOO_MANY_HOLDS');
+    await joinBatch(batch, { email: '', phone: '98765 00001' }).expect(201);
+    await joinBatch(batch, { email: 'not-an-email' }).expect(400);
+  });
 });
 
 describe('requests arriving together', () => {
@@ -473,5 +486,42 @@ describe('requests arriving together', () => {
     );
     expect(attempts.filter((r) => r.status === 201)).toHaveLength(1);
     for (const r of attempts.filter((a) => a.status !== 201)) expect(r.body.error.code).toBe('BATCH_FULL');
+  });
+});
+
+describe('a long members list on Cloudflare D1', () => {
+  // D1 refuses a statement with more than 100 bound values (test/setup.ts enforces it). The list loads
+  // up to 500 members and then their courts, which once bound one value per member.
+  it('lists more than 100 court memberships with their courts', async () => {
+    const { body } = await admin('post', '/memberships').send(courtBody()).expect(201);
+    const cols = ((await db.all(sql`SELECT name FROM pragma_table_info('memberships')`)) as { name: string }[]).map((c) => c.name);
+    const copy = cols.map((c) => (c === 'id' ? 'lower(hex(randomblob(16)))' : c === 'membership_no' ? "'MEM-X' || n" : c === 'access_token_hash' ? 'NULL' : c)).join(', ');
+    await db.run(sql.raw(`WITH RECURSIVE seq(n) AS (SELECT 1 UNION ALL SELECT n + 1 FROM seq WHERE n < 120)
+      INSERT INTO memberships (${cols.join(', ')}) SELECT ${copy} FROM memberships, seq WHERE memberships.id = '${body.membership.id}'`));
+    await db.run(sql.raw(`INSERT INTO membership_courts (membership_id, court_id)
+      SELECT m.id, mc.court_id FROM memberships m, membership_courts mc WHERE mc.membership_id = '${body.membership.id}' AND m.id != '${body.membership.id}'`));
+
+    const list = await admin('get', '/memberships').expect(200);
+    expect(list.body.memberships.length).toBe(121);
+    expect(list.body.memberships.every((m: { courts: unknown[] }) => m.courts.length === 1)).toBe(true);
+  });
+});
+
+describe('referrals are switched off (removed 24 Nov 2026)', () => {
+  it('ignores a referral code, charges the full price, and gives the member no code', async () => {
+    await db.run(sql`UPDATE referral_program SET enabled = 1`);
+    const batch = (await admin('post', '/memberships/batches').send(batchBody()).expect(201)).body.batch;
+    const m = await join(batch, { referralCode: 'ANYCODE1' });
+    const detail = (await admin('get', `/memberships/${m.id}`).expect(200)).body;
+    expect(detail.periods[0].amountPaise).toBe(m.pricePaise);
+    expect(detail.periods[0].discountPaise).toBe(0);
+    expect(detail).not.toHaveProperty('referralCode');
+    expect((await db.all(sql`SELECT count(*) AS n FROM referral_codes`))[0]).toEqual({ n: 0 });
+  });
+
+  it('has no referral pages or code check any more', async () => {
+    await admin('get', '/referrals').expect(404);
+    await site('post', '/referrals/check').send({ code: 'ANYCODE1', pricePaise: 100000 }).expect(404);
+    expect((await site('get', '/memberships/options').expect(200)).body).not.toHaveProperty('referralsEnabled');
   });
 });

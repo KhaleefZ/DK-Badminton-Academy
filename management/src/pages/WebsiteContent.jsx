@@ -69,7 +69,7 @@ const LABELS = {
 const HINTS = {
   titleHighlight: 'Copy these exactly from the heading. Leave empty for no emphasis.',
   to: 'A page such as /booking, or a full address starting https://.',
-  body: 'Leave a blank line between paragraphs. Start a line with ## to make a heading.',
+  body: 'Leave a blank line between paragraphs. Start a line with ## to make a heading, or with - to make a bullet list. Put ** around words to make them bold.',
   priceSource: 'A saved price always wins, so this card can’t disagree with what bookings charge.',
 };
 const CHOICES = {

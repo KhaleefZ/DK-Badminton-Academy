@@ -1071,3 +1071,40 @@
   display: flex;
   gap: 16px;
 }
+
+/* Settings → WhatsApp: the 8 templates to create in Meta */
+.template-guide summary {
+  cursor: pointer;
+  font-weight: 600;
+  font-size: 13px;
+}
+
+.template-guide__list {
+  display: grid;
+  gap: 16px;
+  margin: 12px 0 0;
+  padding: 0;
+  list-style: none;
+}
+
+.template-guide__item {
+  display: grid;
+  gap: 6px;
+  padding: 12px 14px;
+  border: 1px solid var(--border-subtle);
+  border-radius: 10px;
+}
+
+.template-guide__head {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+
+.template-guide__body {
+  margin: 0;
+  font-size: 13px;
+  line-height: 1.5;
+  overflow-wrap: anywhere;
+}

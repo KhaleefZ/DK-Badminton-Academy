@@ -110,7 +110,7 @@ The email sender (Gmail address and app password) and the WhatsApp number are se
 | Database schema / migrations | `backend/src/db/schema.ts`, `backend/drizzle/` |
 | Login rules and roles | `backend/src/auth/policy.ts`, `backend/src/auth/permissions.ts` |
 | Availability and double-booking protection | `backend/src/schedule/` |
-| Memberships and referrals | `backend/src/memberships/` |
+| Memberships (and member credit) | `backend/src/memberships/` |
 | Email queue | `backend/src/messages/queue.ts` |
 | Design tokens | `src/styles/tokens.css` in each frontend |
 | Website motion plans | `docs/motion-plan.md`, `docs/motion-plan-v2-additions.md` |

@@ -1199,6 +1199,14 @@
   white-space: pre-line;
 }
 
+.custom-page__list {
+  margin: 0;
+  padding-left: 1.25em;
+  display: grid;
+  gap: 8px;
+}
+
+
 /* ---------- Pricing & memberships: plan cards and the join form on one page ---------- */
 
 /* Jumping to #plans or #join leaves room for the sticky header. */

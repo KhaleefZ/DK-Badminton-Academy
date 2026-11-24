@@ -6,12 +6,12 @@ import Notice from '../components/Notice';
 import PasswordField from '../components/PasswordField';
 import { useAuth } from '../auth/AuthContext';
 import { AuthFrame, AuthLoading } from '../auth/AuthStates';
+import { safeNext } from '../lib/safeNext';
 
 const EMAIL = /^[^\s@]+@[^\s@]+\.[^\s@]{2,}$/;
 const websiteUrl = import.meta.env.VITE_WEBSITE_URL || 'http://localhost:5173';
 
 // Only follow internal paths after sign-in (never an external URL from the query string).
-const safeNext = (value) => (value && value.startsWith('/') && !value.startsWith('//') && !value.startsWith('/login') ? value : '/');
 
 const END_NOTICES = {
   signedOut: { text: 'You’ve signed out. Sign in again to continue.' },
@@ -26,7 +26,7 @@ export default function Login() {
   const { status, user, endReason, signIn } = useAuth();
   const navigate = useNavigate();
   const [params] = useSearchParams();
-  const next = safeNext(params.get('next'));
+  const next = safeNext(params.get('next'), { allowLogin: false });
 
   const [form, setForm] = useState({ email: '', password: '', remember: false });
   const [submits, setSubmits] = useState(0);

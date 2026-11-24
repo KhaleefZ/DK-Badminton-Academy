@@ -17,8 +17,10 @@ import SimpleFormDialog from '../dialogs/SimpleFormDialog';
 import { useCan } from '../auth/AuthContext';
 import { useWorkspace } from '../store/WorkspaceContext';
 import { api } from '../lib/api';
-import { endFromInput, endToInput, formatDate, formatDays, formatInstant, formatPaise, PAYMENT_LABELS, toPaise, venueToday } from '../lib/format';
+import { CHANNEL_LABELS, endFromInput, endToInput, formatDate, formatDays, formatInstant, formatPaise, MESSAGE_LABELS, MESSAGE_STATUS, MESSAGE_TONES, PAYMENT_LABELS, toPaise, venueToday } from '../lib/format';
 import { useResource } from '../lib/useResource';
+import ViewTabs from '../components/ViewTabs';
+import { PEOPLE } from '../layout/sections';
 
 const KIND_OPTIONS = [
   { value: 'all', label: 'All memberships' },
@@ -72,7 +74,7 @@ function CourtTimeFields({ form, set, days, setDays, courts, courtIds, setCourtI
 
 function AddDialog({ plans, batches, courts, onClose, onSaved }) {
   const available = plans.filter((p) => p.active);
-  const [form, setForm] = useState({ planId: available[0]?.id ?? '', batchId: '', holderName: '', phone: '', email: '', notes: '', startsOn: venueToday(), start: '', end: '', rupees: '', referralCode: '' });
+  const [form, setForm] = useState({ planId: available[0]?.id ?? '', batchId: '', holderName: '', phone: '', email: '', notes: '', startsOn: venueToday(), start: '', end: '', rupees: '' });
   const [days, setDays] = useState([]);
   const [courtIds, setCourtIds] = useState([]);
   const set = (field) => (e) => setForm((f) => ({ ...f, [field]: e.target.value }));
@@ -83,7 +85,7 @@ function AddDialog({ plans, batches, courts, onClose, onSaved }) {
 
   const submit = async () => {
     const pricePaise = form.rupees.trim() === '' ? undefined : (toPaise(form.rupees) ?? undefined);
-    const base = { planId: form.planId, holderName: form.holderName, phone: form.phone, email: form.email, notes: form.notes, startsOn: form.startsOn, pricePaise, referralCode: form.referralCode };
+    const base = { planId: form.planId, holderName: form.holderName, phone: form.phone, email: form.email, notes: form.notes, startsOn: form.startsOn, pricePaise };
     const body = plan?.kind === 'court' ? { ...base, courtIds, days, start: form.start, end: endFromInput(form.end) } : { ...base, batchId };
     const { membership } = await api('/memberships', { method: 'POST', body });
     onSaved(membership);
@@ -95,7 +97,7 @@ function AddDialog({ plans, batches, courts, onClose, onSaved }) {
         <Field as="select" label="Plan" options={available.map((p) => ({ value: p.id, label: p.name }))} value={form.planId} onChange={(e) => setForm((f) => ({ ...f, planId: e.target.value, batchId: '' }))} />
         <Field label="Start date" type="date" required value={form.startsOn} onChange={set('startsOn')} />
         <Field label={plan?.kind === 'court' ? 'Contact name' : 'Member name'} required autoComplete="off" value={form.holderName} onChange={set('holderName')} />
-        <Field label="Phone" type="tel" required autoComplete="off" value={form.phone} onChange={set('phone')} />
+        <Field label="Phone (WhatsApp)" type="tel" required autoComplete="off" value={form.phone} onChange={set('phone')} />
         <div className="form-grid__full">
           <Field label="Email (optional)" type="email" autoComplete="off" value={form.email} onChange={set('email')} />
         </div>
@@ -114,7 +116,6 @@ function AddDialog({ plans, batches, courts, onClose, onSaved }) {
           </div>
         )}
         <Field label="Price per month (₹)" type="number" min="0" step="any" hint={`Blank uses the usual ${formatPaise(usual)}.`} value={form.rupees} onChange={set('rupees')} />
-        <Field label="Referral code (optional)" maxLength={30} autoComplete="off" hint="Takes the discount off the first month." value={form.referralCode} onChange={set('referralCode')} />
         <div className="form-grid__full">
           <Field as="textarea" label="Notes" maxLength={1000} value={form.notes} onChange={set('notes')} />
         </div>
@@ -152,7 +153,7 @@ function EditDialog({ membership, onClose, onSaved }) {
     <SimpleFormDialog title={`Edit ${membership.membershipNo}`} submitLabel="Save changes" onSubmit={submit} onClose={onClose}>
       <div className="form-grid">
         <Field label="Name" required autoComplete="off" value={form.holderName} onChange={set('holderName')} />
-        <Field label="Phone" type="tel" required autoComplete="off" value={form.phone} onChange={set('phone')} />
+        <Field label="Phone (WhatsApp)" type="tel" required autoComplete="off" value={form.phone} onChange={set('phone')} />
         <Field label="Email (optional)" type="email" autoComplete="off" value={form.email} onChange={set('email')} />
         <Field label="Price per month (₹)" type="number" min="0" step="any" hint="Applies from the next renewal." value={form.rupees} onChange={set('rupees')} />
         <div className="form-grid__full">
@@ -232,7 +233,7 @@ function PlayerDialog({ membership, onClose, onSaved }) {
 
 function Detail({ data, onAction }) {
   const can = useCan();
-  const { membership: m, periods, players, playerLimit, payments, referralCode, credits, creditBalancePaise } = data;
+  const { membership: m, periods, players, playerLimit, payments, credits, creditBalancePaise, messages = [] } = data;
   const manage = can('memberships.manage');
   const live = m.status === 'active';
   const unpaid = periods.filter((p) => p.duePaise > 0);
@@ -303,7 +304,7 @@ function Detail({ data, onAction }) {
               {formatDate(p.startsOn)} to {formatDate(p.endsOn)}
               <span className="fine muted receipt-list__when">
                 {formatPaise(p.paidPaise)} of {formatPaise(p.amountPaise)} paid
-                {p.discountPaise > 0 && ` · ${formatPaise(p.discountPaise)} referral discount`}
+                {p.discountPaise > 0 && ` · ${formatPaise(p.discountPaise)} discount`}
                 {p.creditPaise > 0 && ` · ${formatPaise(p.creditPaise)} credit used`}
               </span>
             </span>
@@ -340,18 +341,10 @@ function Detail({ data, onAction }) {
           </ul>
         </>
       )}
-      {(referralCode || credits.length > 0) && (
+      {(manage || credits.length > 0) && (
         <>
-          <p className="panel__title">Referral and credit</p>
-          <p className="detail-panel__lines">
-            {referralCode && (
-              <>
-                Referral code: <strong>{referralCode}</strong>
-                <br />
-              </>
-            )}
-            Credit: {formatPaise(creditBalancePaise)}
-          </p>
+          <p className="panel__title">Credit</p>
+          <p className="detail-panel__lines">Credit: {formatPaise(creditBalancePaise)} · comes off the next renewal</p>
           {credits.length > 0 && (
             <ul className="receipt-list">
               {credits.map((c) => (
@@ -397,6 +390,27 @@ function Detail({ data, onAction }) {
               Add player
             </button>
           )}
+        </>
+      )}
+      {messages.length > 0 && (
+        <>
+          <p className="panel__title">Messages</p>
+          <ul className="receipt-list">
+            {messages.map((msg) => (
+              <li key={msg.id}>
+                <span>
+                  {MESSAGE_LABELS[msg.template] ?? msg.template}
+                  <span className="fine muted receipt-list__when">
+                    {CHANNEL_LABELS[msg.channel] ?? msg.channel}
+                    {msg.audience === 'owner' ? ' to owner' : ''}
+                    {msg.fallbackOf ? ' (instead of WhatsApp)' : ''} · {formatInstant(msg.sentAt ?? msg.createdAt)}
+                    {msg.lastError ? ` · ${msg.lastError}` : ''}
+                  </span>
+                </span>
+                <StatusBadge tone={MESSAGE_TONES[msg.status]}>{MESSAGE_STATUS[msg.status]}</StatusBadge>
+              </li>
+            ))}
+          </ul>
         </>
       )}
       {unpaid.length > 0 && !live && <Notice tone="warning">{formatPaise(m.duePaise)} was still owed when this ended.</Notice>}
@@ -480,7 +494,7 @@ export default function Memberships() {
   return (
     <>
       <PageHeader
-        title="Memberships"
+        title={PEOPLE.label}
         subtitle="Individual members and court memberships, kept apart from other customers."
         action={
           can('memberships.manage') ? (
@@ -490,6 +504,7 @@ export default function Memberships() {
           ) : undefined
         }
       />
+      <ViewTabs tabs={PEOPLE.tabs} label="Customers and memberships" />
 
       <KpiRow>
         <KpiTile label="Active" value={count('Active')} caption="More than a week left" />
@@ -632,7 +647,7 @@ export default function Memberships() {
           <ActionDialog
             key="renew"
             title={`Renew ${selected.membershipNo}?`}
-            description={`Adds one month at ${formatPaise(Math.max(selected.pricePaise - shown.creditBalancePaise, 0))}${shown.creditBalancePaise > 0 ? ' after credit' : ''}, which shows as due until it’s paid.`}
+            description={`Adds one month at ${formatPaise(Math.max(selected.pricePaise - shown.creditBalancePaise, 0))}${shown.creditBalancePaise > 0 ? ' after credit' : ''}, which shows as due until it’s paid. The member is sent the amount due and the date to pay by.`}
             label="Renew"
             danger={false}
             onClose={close}
@@ -646,7 +661,7 @@ export default function Memberships() {
           <ActionDialog
             key="cancel"
             title={`Cancel ${selected.membershipNo}?`}
-            description="Future court time is freed. Under the cancellation and refund policy, a month that has already started isn’t refunded; a paid month that hasn’t started is refunded in full. Handle any refund from the Payments page."
+            description="Future court time is freed. The member gets no message; the owner numbers are told. Under the cancellation and refund policy, a month that has already started isn’t refunded; a paid month that hasn’t started is refunded in full. Handle any refund from the Payments page."
             label="Cancel membership"
             reasonLabel="Reason (optional)"
             onClose={close}

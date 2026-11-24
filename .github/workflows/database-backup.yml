@@ -1,0 +1,69 @@
+# Weekly copy of the live database, kept as a private download in this (private) repository for 90 days.
+# Free, with no card: GitHub Actions minutes and artifact storage are included for private repos, and it
+# replaces the R2 bucket backups needed. Cloudflare's own Time Travel still covers the last 7 days.
+#
+# One-time setup (docs/hosting-on-cloudflare.md, section 10):
+#   GitHub → this repo → Settings → Secrets and variables → Actions → New repository secret:
+#     CLOUDFLARE_API_TOKEN   a token with Account → D1 → Edit (an export briefly locks the database)
+#     CLOUDFLARE_ACCOUNT_ID  from the Cloudflare dashboard
+# Scheduled runs only start once this file is on the default branch (main).
+name: Database backup
+
+on:
+  schedule:
+    - cron: '30 21 * * 6' # Saturday 21:30 UTC = Sunday 03:00 IST
+  workflow_dispatch: # "Run workflow" button for a backup on demand
+
+permissions:
+  contents: read
+
+concurrency:
+  group: database-backup
+  cancel-in-progress: false
+
+jobs:
+  backup:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    defaults:
+      run:
+        working-directory: backend
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - name: Export the live database
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+        run: |
+          if [ -z "$CLOUDFLARE_API_TOKEN" ] || [ -z "$CLOUDFLARE_ACCOUNT_ID" ]; then
+            echo "::error::Add the CLOUDFLARE_API_TOKEN and CLOUDFLARE_ACCOUNT_ID repository secrets first."
+            exit 1
+          fi
+          day=$(TZ=Asia/Kolkata date +%F)
+          echo "DAY=$day" >> "$GITHUB_ENV"
+          # The same wrangler version the project uses; the database comes from wrangler.jsonc.
+          npx --yes wrangler@4.161.0 d1 export dk-badminton --remote -y --output "dk-badminton-$day.sql"
+
+      - name: Check the copy is a real database dump
+        run: |
+          file="dk-badminton-$DAY.sql"
+          size=$(wc -c < "$file")
+          tables=$(grep -c '^CREATE TABLE' "$file" || true)
+          echo "Backup $file: $size bytes, $tables tables"
+          if [ "$tables" -lt 20 ]; then
+            echo "::error::The export has only $tables tables, so it isn't a full copy."
+            exit 1
+          fi
+          gzip -9 "$file"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: dk-badminton-${{ env.DAY }}
+          path: backend/dk-badminton-${{ env.DAY }}.sql.gz
+          retention-days: 90
+          if-no-files-found: error

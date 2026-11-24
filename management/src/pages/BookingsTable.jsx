@@ -17,7 +17,7 @@ import PaymentDialog from '../dialogs/PaymentDialog';
 import { useCan } from '../auth/AuthContext';
 import { useWorkspace } from '../store/WorkspaceContext';
 import { api } from '../lib/api';
-import { formatDate, formatFullDate, formatInstant, formatPaise, MESSAGE_LABELS, MESSAGE_STATUS, MESSAGE_TONES, PAYMENT_LABELS, venueToday } from '../lib/format';
+import { CHANNEL_LABELS, formatDate, formatFullDate, formatInstant, formatPaise, MESSAGE_LABELS, MESSAGE_STATUS, MESSAGE_TONES, PAYMENT_LABELS, venueToday } from '../lib/format';
 import { useResource } from '../lib/useResource';
 import { BOOKING_TABS } from './BookingsSchedule';
 
@@ -162,9 +162,10 @@ export default function BookingsTable() {
             whatsappUrl={detail.data.whatsappUrl}
             onResend={async () => {
               try {
-                await api(`/bookings/${routed.id}/resend-email`, { method: 'POST' });
+                // WhatsApp when it's set up, otherwise email (if the customer gave one).
+                const { channel } = await api(`/bookings/${routed.id}/resend-email`, { method: 'POST' });
                 detail.reload();
-                notify('Confirmation email queued.');
+                notify(channel === 'whatsapp' ? 'Confirmation queued on WhatsApp.' : 'Confirmation email queued.');
               } catch (err) {
                 notify(err.message);
               }
@@ -210,7 +211,7 @@ export default function BookingsTable() {
           <ActionDialog
             key="cancel"
             title={`Cancel ${routed.bookingNo}?`}
-            description={`${routed.customer.name} · ${routed.courtName} · ${formatDate(routed.date)} · ${routed.start}–${routed.end}. The slot becomes free. No message is sent.`}
+            description={`${routed.customer.name} · ${routed.courtName} · ${formatDate(routed.date)} · ${routed.start}–${routed.end}. The slot becomes free, and the customer is sent a cancellation message.`}
             label="Cancel booking"
             reasonLabel="Reason (optional)"
             onClose={close}
@@ -226,7 +227,7 @@ export default function BookingsTable() {
           <ActionDialog
             key="restore"
             title={`Restore ${routed.bookingNo}?`}
-            description="It takes its slot back, if that time is still free."
+            description="It takes its slot back if that time is still free, and the customer is sent the confirmation again."
             label="Restore booking"
             danger={false}
             onClose={close}
@@ -330,7 +331,9 @@ function BookingDetail({ booking, receipts, messages, whatsappUrl, onResend, onW
                 <span>
                   {MESSAGE_LABELS[m.template] ?? m.template}
                   <span className="fine muted receipt-list__when">
-                    {formatInstant(m.sentAt ?? m.createdAt)}
+                    {CHANNEL_LABELS[m.channel] ?? m.channel}
+                    {m.audience === 'owner' ? ' to owner' : ''}
+                    {m.fallbackOf ? ' (instead of WhatsApp)' : ''} · {formatInstant(m.sentAt ?? m.createdAt)}
                     {m.lastError ? ` · ${m.lastError}` : ''}
                   </span>
                 </span>
@@ -349,7 +352,7 @@ function BookingDetail({ booking, receipts, messages, whatsappUrl, onResend, onW
         {confirmed && <Button onClick={onEdit}>Edit booking</Button>}
         {(confirmed || held) && <Button onClick={onCancel}>{held ? 'Release hold' : 'Cancel booking'}</Button>}
         {cancelled && <Button onClick={onRestore}>Restore booking</Button>}
-        {confirmed && booking.customer.email && <Button onClick={onResend}>Resend email</Button>}
+        {confirmed && <Button onClick={onResend}>Resend confirmation</Button>}
         {whatsappUrl && (
           <Button href={whatsappUrl} onClick={onWhatsapp}>
             Send on WhatsApp

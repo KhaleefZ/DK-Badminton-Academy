@@ -13,7 +13,7 @@ import { parseBody, UUID } from '../lib/validate.js';
 import { hashToken } from '../auth/crypto.js';
 import { currentAuth, requirePasswordCurrent, requirePermission, requireSession } from '../middleware/auth.js';
 import { bookingToken, customerWhatsappUrl } from '../messages/links.js';
-import { enqueueBookingMessage } from '../messages/queue.js';
+import { notifyBookingCancelled, notifyBookingConfirmed, notifyNewBooking } from '../messages/notify.js';
 import { quote, releaseExpiredHolds } from '../schedule/availability.js';
 import { prepareMove, prepareReservation, requireOpen, setReservationStatus } from '../schedule/reservations.js';
 
@@ -203,7 +203,8 @@ export function bookingsRouter(): Router {
       db.insert(bookings).values({ ...booking, accessTokenHash: hashToken(bookingToken(id)) }),
       audit(req, 'booking.created', id, undefined, { ...booking, ...time }),
     ]);
-    await enqueueBookingMessage(id, 'confirmed', actor(req));
+    // The customer's confirmation (WhatsApp, or email as the fallback) and the owner's WhatsApp alert.
+    await notifyNewBooking(id, actor(req));
     const created = { id };
     res.status(201).json({ booking: await findOne(eq(bookings.id, created.id)) });
   });
@@ -214,7 +215,7 @@ export function bookingsRouter(): Router {
     const booking = await findOne(UUID.test(id) ? eq(bookings.id, id) : eq(bookings.bookingNo, id.toUpperCase()));
     const receipts = await db.select().from(payments).where(eq(payments.bookingId, booking.id)).orderBy(desc(payments.receivedAt));
     const sent = await db
-      .select({ id: messages.id, channel: messages.channel, template: messages.template, status: messages.status, sentAt: messages.sentAt, createdAt: messages.createdAt, lastError: messages.lastError })
+      .select({ id: messages.id, channel: messages.channel, audience: messages.audience, fallbackOf: messages.fallbackOf, template: messages.template, status: messages.status, sentAt: messages.sentAt, createdAt: messages.createdAt, lastError: messages.lastError })
       .from(messages)
       .where(eq(messages.bookingId, booking.id))
       .orderBy(desc(messages.createdAt))
@@ -243,7 +244,7 @@ export function bookingsRouter(): Router {
       db.update(bookings).set(change).where(eq(bookings.id, id)),
       audit(req, 'booking.updated', id, { ...before, accessTokenHash: undefined, startsAt: reservation!.startsAt, endsAt: reservation!.endsAt, courtId: reservation!.courtId }, { ...before, ...change, accessTokenHash: undefined, ...time }),
     ]);
-    if (moved) await enqueueBookingMessage(id, 'changed', actor(req));
+    // Moves aren't messaged to the customer (owner decision, 21 Nov 2026).
     res.json({ booking: await findOne(eq(bookings.id, id)) });
   });
 
@@ -264,7 +265,7 @@ export function bookingsRouter(): Router {
     ]);
     if (!cancelled.length) throw invalid('This booking is already cancelled.', 'BOOKING_CANCELLED');
     // Someone who never finished paying was never told they had a booking.
-    if (before.status === 'active') await enqueueBookingMessage(id, 'cancelled', actor(req));
+    if (before.status === 'active') await notifyBookingCancelled(id, actor(req));
     res.json({ booking: await findOne(eq(bookings.id, id)) });
   });
 
@@ -283,7 +284,7 @@ export function bookingsRouter(): Router {
       auditIfDone(req, 'booking.restored', id),
     ]);
     if (!restored.length) throw invalid('Only a cancelled booking can be restored.', 'BOOKING_ACTIVE');
-    await enqueueBookingMessage(id, 'confirmed', actor(req));
+    await notifyBookingConfirmed(id, actor(req));
     res.json({ booking: await findOne(eq(bookings.id, id)) });
   });
 
@@ -291,9 +292,9 @@ export function bookingsRouter(): Router {
     const id = requireId(req);
     const booking = await findBooking(id);
     if (booking.status !== 'active') throw invalid('Only a confirmed booking can be resent.', 'BOOKING_CANCELLED');
-    const queued = await enqueueBookingMessage(id, 'confirmed', actor(req));
-    if (!queued) throw invalid('This customer has no email address.', 'NO_EMAIL');
-    res.status(202).json({ queued: true });
+    const channel = await notifyBookingConfirmed(id, actor(req));
+    if (!channel) throw invalid('WhatsApp is off and this customer has no email address, so the confirmation can’t be sent.', 'NO_EMAIL');
+    res.status(202).json({ queued: true, channel });
   });
 
   // WhatsApp opens on the staff member's own phone or computer, so this only records that they tapped it.

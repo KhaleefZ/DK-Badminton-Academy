@@ -184,7 +184,7 @@ function MessagingForm({ saved, onSaved }) {
           />
           <Field label="Send staff alerts to" type="email" hint="New website bookings and enquiries. Blank uses the sender." autoComplete="off" value={form.notifyEmail} onChange={set('notifyEmail')} />
           <Field label="Emails per day, at most" type="number" min="1" max="2000" hint="Extra emails wait for the next day." value={form.dailyEmailLimit} onChange={set('dailyEmailLimit')} />
-          <Field label="WhatsApp number" type="tel" hint="Shown on the website for customers to message you." autoComplete="off" value={form.whatsappNumber} onChange={set('whatsappNumber')} />
+          <Field label="WhatsApp number" type="tel" hint="Shown on the website for customers to message you (a chat link). Automatic messages are set up under WhatsApp messages." autoComplete="off" value={form.whatsappNumber} onChange={set('whatsappNumber')} />
           {senderChanged && (
             <div className="form-grid__full">
               <PasswordField label="Your password" autoComplete="current-password" required hint="Changing the sender needs your own password." value={currentPassword} onChange={(e) => setCurrentPassword(e.target.value)} />
@@ -204,6 +204,200 @@ function MessagingForm({ saved, onSaved }) {
           <Button icon={false} onClick={sendTest} disabled={test.pending} aria-busy={test.pending}>
             {test.pending ? 'Sending…' : 'Send test email'}
           </Button>
+        </div>
+      </form>
+    </Panel>
+  );
+}
+
+/* ---------- Automatic WhatsApp (Meta's WhatsApp Cloud API) ---------- */
+
+const MESSAGE_LABELS = {
+  booking_confirmed: 'Booking confirmed',
+  booking_cancelled: 'Booking cancelled',
+  membership_confirmed: 'Membership confirmed',
+  membership_renewed: 'Membership renewed',
+  owner_new_booking: 'Owner: new booking',
+  owner_new_membership: 'Owner: new membership',
+  owner_membership_cancelled: 'Owner: membership cancelled',
+  owner_refund: 'Owner: refund',
+};
+const QUALITY = { GREEN: 'High', YELLOW: 'Medium', RED: 'Low', NA: 'Not rated yet' };
+
+function WhatsappPanel({ onSaved }) {
+  const { data, error: loadError, reload } = useResource('/messages/settings');
+  if (loadError) return <Panel title="WhatsApp messages"><FormAlert error={loadError} /></Panel>;
+  if (!data) return <Panel title="WhatsApp messages"><p className="muted small">Loading…</p></Panel>;
+  return (
+    <WhatsappForm
+      key={JSON.stringify(data.settings.whatsapp)}
+      saved={data.settings.whatsapp}
+      templates={data.whatsappTemplates}
+      onSaved={(message) => {
+        reload();
+        onSaved(message);
+      }}
+    />
+  );
+}
+
+/**
+ * The Owner's WhatsApp setup: keys from Meta, owner numbers, template names. Switching on only works once
+ * Meta accepts the keys; while it's off, customers get their messages by email (if they gave one).
+ */
+function WhatsappForm({ saved, templates, onSaved }) {
+  const [form, setForm] = useState({
+    enabled: saved.enabled,
+    phoneNumberId: saved.phoneNumberId ?? '',
+    businessAccountId: saved.businessAccountId ?? '',
+    templateLanguage: saved.templateLanguage,
+    ownerNumbers: saved.ownerNumbers.join('\n'),
+    dailyLimit: String(saved.dailyLimit),
+  });
+  const [names, setNames] = useState(() => Object.fromEntries(templates.map((t) => [t.kind, saved.templates[t.kind] ?? ''])));
+  const [token, setToken] = useState('');
+  const [currentPassword, setCurrentPassword] = useState('');
+  const [checked, setChecked] = useState(null);
+  const [tested, setTested] = useState(null);
+  const { pending, error, save } = useSave();
+  const check = useSave();
+  const test = useSave();
+  const set = (field) => (e) => setForm((f) => ({ ...f, [field]: e.target.value }));
+  const owners = form.ownerNumbers.split(/[\n,]/).map((n) => n.trim()).filter(Boolean);
+
+  const submit = async (e) => {
+    e.preventDefault();
+    setChecked(null);
+    setTested(null);
+    const body = {
+      enabled: form.enabled,
+      phoneNumberId: form.phoneNumberId.trim() || null,
+      token,
+      businessAccountId: form.businessAccountId.trim() || null,
+      templateLanguage: form.templateLanguage.trim() || 'en',
+      templates: names,
+      ownerNumbers: owners,
+      dailyLimit: form.dailyLimit === '' ? 200 : Number(form.dailyLimit),
+      currentPassword,
+    };
+    const ok = await save(() => api('/messages/whatsapp', { method: 'PUT', body }));
+    setCurrentPassword('');
+    if (ok) {
+      setToken('');
+      onSaved(form.enabled ? 'WhatsApp messages are on.' : 'WhatsApp settings saved.');
+    }
+  };
+
+  const checkKeys = () => {
+    setChecked(null);
+    check.save(async () => setChecked((await api('/messages/whatsapp/check', { method: 'POST' })).number));
+  };
+
+  const sendTest = () => {
+    setTested(null);
+    test.save(async () => setTested(await api('/messages/whatsapp/test', { method: 'POST' })));
+  };
+
+  const badge = saved.enabled ? ['success', 'On'] : saved.hasToken ? ['warning', 'Off · keys saved'] : ['tint', 'Off'];
+
+  return (
+    <Panel title="WhatsApp messages" meta={<StatusBadge tone={badge[0]}>{badge[1]}</StatusBadge>}>
+      <form className="settings-form" onSubmit={submit} noValidate>
+        <FormAlert error={error} />
+        <p className="fine muted">
+          Sends booking and membership confirmations to customers, and new bookings, memberships, cancellations and refunds to the owner numbers below. While this is off, customers get the same details by email (if they gave one).
+        </p>
+        <ol className="fine muted settings-steps">
+          <li>In Meta Business (business.facebook.com), add a WhatsApp number for the academy and a payment card.</li>
+          <li>In WhatsApp Manager, create the 8 templates listed below (category Utility, language as set here), exactly as worded, and wait for approval.</li>
+          <li>Create a permanent access token through a system user (not the 24-hour test token), with the whatsapp_business_messaging permission.</li>
+          <li>Paste the phone number ID and token here with your password and save. Press Check connection, then Send test.</li>
+          <li>Tick Send WhatsApp messages and save again.</li>
+        </ol>
+        <div className="form-grid">
+          <Field label="Phone number ID" inputMode="numeric" autoComplete="off" spellCheck={false} hint="From WhatsApp Manager → API setup. Not the phone number itself." value={form.phoneNumberId} onChange={set('phoneNumberId')} />
+          <PasswordField
+            label="Permanent access token"
+            autoComplete="new-password"
+            hint={saved.hasToken ? 'One is saved. Leave blank to keep it.' : 'Never shown again after saving.'}
+            value={token}
+            onChange={(e) => setToken(e.target.value)}
+          />
+          <Field label="Business account ID (optional)" inputMode="numeric" autoComplete="off" spellCheck={false} value={form.businessAccountId} onChange={set('businessAccountId')} />
+          <Field label="Template language" autoComplete="off" spellCheck={false} hint="As approved in Meta, e.g. en or en_US." value={form.templateLanguage} onChange={set('templateLanguage')} />
+          <Field
+            as="textarea"
+            label="Owner numbers"
+            hint="One per line, up to 5. They get new bookings, new memberships, cancelled memberships and refunds."
+            value={form.ownerNumbers}
+            onChange={set('ownerNumbers')}
+          />
+          <Field label="WhatsApp messages per day, at most" type="number" min="1" max="1000" hint="A cost guard (about ₹0.12 each). Past it, customers get email instead." value={form.dailyLimit} onChange={set('dailyLimit')} />
+          <div className="form-grid__full">
+            <details className="template-guide">
+              <summary>The 8 templates to create in Meta ({templates.filter((t) => names[t.kind]).length ? 'some names changed' : 'built-in names'})</summary>
+              <p className="fine muted">Create each as category Utility with the wording shown; the {'{{1}}'}, {'{{2}}'}… are filled in by the app. Change a name here only if Meta approved it under a different one.</p>
+              <ul className="template-guide__list">
+                {templates.map((t) => (
+                  <li key={t.kind} className="template-guide__item">
+                    <div className="template-guide__head">
+                      <strong>{MESSAGE_LABELS[t.kind] ?? t.kind}</strong>
+                      <span className="fine muted">{t.audience === 'owner' ? 'To owner numbers' : 'To the customer'}</span>
+                    </div>
+                    <p className="template-guide__body">{t.body}</p>
+                    {t.button && (
+                      <p className="fine muted">
+                        Button: “View {t.button}”, a website link ending with {'{{1}}'}, e.g. https://yourdomain.in/{t.button}/status/{'{{1}}'}
+                      </p>
+                    )}
+                    <Field label="Template name in Meta" autoComplete="off" spellCheck={false} placeholder={t.defaultName} value={names[t.kind]} onChange={(e) => setNames((n) => ({ ...n, [t.kind]: e.target.value.trim() }))} />
+                  </li>
+                ))}
+              </ul>
+            </details>
+          </div>
+          <div className="form-grid__full">
+            <label className="day-check">
+              <input type="checkbox" checked={form.enabled} onChange={(e) => setForm((f) => ({ ...f, enabled: e.target.checked }))} />
+              <span>Send WhatsApp messages</span>
+            </label>
+          </div>
+          <div className="form-grid__full">
+            <PasswordField label="Your password" autoComplete="current-password" required hint="WhatsApp settings always need your own password." value={currentPassword} onChange={(e) => setCurrentPassword(e.target.value)} />
+          </div>
+        </div>
+        <FormAlert error={check.error} />
+        {checked && (
+          <div role="status">
+            <Notice>
+              The saved keys work: {checked.verifiedName || 'your business'} on {checked.displayPhoneNumber}. Quality: {QUALITY[checked.qualityRating] ?? checked.qualityRating}.
+            </Notice>
+          </div>
+        )}
+        <FormAlert error={test.error} />
+        {tested && (
+          <div role="status">
+            <Notice>
+              Test sent to {tested.sentTo} with the “{tested.template}” template. It should arrive in a few seconds.
+            </Notice>
+          </div>
+        )}
+        <div className="settings-form__actions">
+          <Button type="submit" variant="primary" icon={false} disabled={pending} aria-busy={pending}>
+            {pending ? 'Saving…' : 'Save WhatsApp settings'}
+          </Button>
+          {saved.hasToken && saved.phoneNumberId && (
+            <>
+              <Button icon={false} onClick={checkKeys} disabled={check.pending} aria-busy={check.pending}>
+                {check.pending ? 'Checking…' : 'Check connection'}
+              </Button>
+              {saved.ownerNumbers.length > 0 && (
+                <Button icon={false} onClick={sendTest} disabled={test.pending} aria-busy={test.pending}>
+                  {test.pending ? 'Sending…' : 'Send test'}
+                </Button>
+              )}
+            </>
+          )}
         </div>
       </form>
     </Panel>
@@ -802,6 +996,7 @@ export default function Settings() {
         <div className="settings-stack">
           <VenuePanel venue={data.settings} onSaved={saved} />
           <MessagingPanel onSaved={saved} />
+          {can('settings.manage') && <WhatsappPanel onSaved={saved} />}
           {can('settings.manage') && <PaymentsPanel onSaved={saved} />}
           <CourtsPanel courts={data.courts} onChanged={saved} onEdit={setEditingCourt} onDelete={setDeletingCourt} onError={setPageError} />
           <HoursPanel hours={data.hours} onSaved={saved} />

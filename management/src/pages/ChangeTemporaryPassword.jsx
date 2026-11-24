@@ -6,8 +6,8 @@ import PasswordField from '../components/PasswordField';
 import { useAuth } from '../auth/AuthContext';
 import { AuthFrame, AuthLoading } from '../auth/AuthStates';
 import { usePasswordForm } from '../auth/usePasswordForm';
+import { safeNext } from '../lib/safeNext';
 
-const safeNext = (value) => (value && value.startsWith('/') && !value.startsWith('//') ? value : '/');
 
 /** The only page a temporary password can reach. */
 export default function ChangeTemporaryPassword() {

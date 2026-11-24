@@ -4,16 +4,16 @@ import { and, asc, desc, eq, inArray, isNull, max, sql } from 'drizzle-orm';
 import { z } from 'zod';
 import { hashToken } from '../auth/crypto.js';
 import { db, DB_ERRORS, dbErrorCode, Work } from '../db/client.js';
-import { messages, referralCodes, courts, memberBatches, memberCredits, memberships, membershipCourts, membershipKind, membershipPeriods, membershipPlans, membershipPlayers, nextNumber, paymentMethod, payments } from '../db/schema.js';
+import { messages, courts, memberBatches, memberCredits, memberships, membershipCourts, membershipKind, membershipPeriods, membershipPlans, membershipPlayers, nextNumber, paymentMethod, payments } from '../db/schema.js';
 import { auditEntry } from '../lib/audit.js';
 import { AppError, invalid, notFound } from '../lib/errors.js';
 import { likeTerm, ilike } from '../lib/search.js';
 import { addDays, isDate, monthEnd, toMinutes, toTime, venueToday } from '../lib/time.js';
 import { parseBody, UUID } from '../lib/validate.js';
-import { applyCredit, claimReferral, creditBalance, ensureMemberCode, recordRedemption, settleReferral } from '../memberships/referrals.js';
+import { applyCredit, creditBalance } from '../memberships/credit.js';
 import { addPeriod, courtIdsOf, holdWeeklyTime, nextPeriod, periodPaid, releaseFutureBlocks, seatsTaken, startCourtBlocks, takeBatchSeat } from '../memberships/service.js';
 import { membershipReminderWhatsappUrl, membershipToken } from '../messages/links.js';
-import { enqueueMembershipMessage } from '../messages/queue.js';
+import { notifyMembershipRenewed, notifyNewMembership, notifyOwnerMembershipCancelled } from '../messages/notify.js';
 import { currentAuth, requirePasswordCurrent, requirePermission, requireSession } from '../middleware/auth.js';
 import { releaseExpiredHolds } from '../schedule/availability.js';
 
@@ -70,7 +70,6 @@ const newMembership = person.extend({
   batchId: uuidField('Choose a batch.').nullish(),
   courtIds: z.array(z.string().regex(UUID)).max(2, 'A court membership can hold at most 2 courts.').nullish(),
   days: days.nullish(),
-  referralCode: z.string().trim().max(30).nullish().transform((v) => v || null),
 });
 
 const courtTime = z.object({ courtIds: z.array(uuidField('Choose a court.')).min(1, 'Choose at least one court.').max(2, 'A court membership can hold at most 2 courts.'), days });
@@ -131,10 +130,14 @@ async function membershipViews(where: ReturnType<typeof and>) {
     .where(where)
     .orderBy(desc(memberships.createdAt))
     .limit(500);
-  const ids = rows.map((r) => r.membership.id);
-  const courtRows = ids.length
-    ? await db.select({ membershipId: membershipCourts.membershipId, id: courts.id, name: courts.name }).from(membershipCourts).innerJoin(courts, eq(membershipCourts.courtId, courts.id)).where(inArray(membershipCourts.membershipId, ids))
-    : [];
+  // Only court memberships (no batch) have their own courts. D1 refuses a statement with more than 100
+  // bound values, so the ids go in groups of 90, sent as one batch (one query on the free plan's 50).
+  const ids = rows.filter((r) => !r.batch).map((r) => r.membership.id);
+  const groups: string[][] = [];
+  for (let i = 0; i < ids.length; i += 90) groups.push(ids.slice(i, i + 90));
+  const courtLookup = (group: string[]) =>
+    db.select({ membershipId: membershipCourts.membershipId, id: courts.id, name: courts.name }).from(membershipCourts).innerJoin(courts, eq(membershipCourts.courtId, courts.id)).where(inArray(membershipCourts.membershipId, group));
+  const courtRows = groups.length ? (await db.batch(groups.map(courtLookup) as [ReturnType<typeof courtLookup>, ...ReturnType<typeof courtLookup>[]])).flat() : [];
   return rows.map(({ membership: { accessTokenHash: _hash, ...m }, planName, batch, duePaise }) => {
     const time = batch ?? m;
     return {
@@ -311,23 +314,19 @@ export function membershipsRouter(): Router {
       const batch = await takeBatchSeat(values.batchId, values.startsOn, endsOn);
       if (batch.planId !== plan.id) throw invalid('That batch belongs to another plan.', 'WRONG_PLAN');
       const pricePaise = values.pricePaise ?? plan.pricePaise;
-      const referral = await claimReferral(values.referralCode, { phone: values.phone, email: values.email, pricePaise });
       work.add(db.insert(memberships).values({ ...base, batchId: batch.id, pricePaise, membershipNo: newNumber('individual') }));
-      addPeriod(work, id, values.startsOn, endsOn, pricePaise - (referral?.discountPaise ?? 0), { discountPaise: referral?.discountPaise ?? 0 });
-      recordRedemption(work, id, referral);
+      addPeriod(work, id, values.startsOn, endsOn, pricePaise);
     } else {
       const { courtIds, days: chosenDays } = parseBody(courtTime, req.body);
       const time = parseBody(clock, req.body);
       const pricePaise = values.pricePaise ?? plan.pricePaise * courtIds.length;
-      const referral = await claimReferral(values.referralCode, { phone: values.phone, email: values.email, pricePaise });
       work.add(db.insert(memberships).values({ ...base, days: chosenDays, ...time, pricePaise, membershipNo: newNumber('court') }));
       work.add(db.insert(membershipCourts).values(courtIds.map((courtId) => ({ membershipId: id, courtId }))));
       await startCourtBlocks(work, id, courtIds, { days: chosenDays, ...time }, values.startsOn, endsOn, actor(req));
-      addPeriod(work, id, values.startsOn, endsOn, pricePaise - (referral?.discountPaise ?? 0), { discountPaise: referral?.discountPaise ?? 0 });
-      recordRedemption(work, id, referral);
+      addPeriod(work, id, values.startsOn, endsOn, pricePaise);
     }
-    work.add(ensureMemberCode(id), audit(req, 'membership.created', 'membership', id, { planId: plan.id, startsOn: values.startsOn, endsOn }));
-    work.after(() => settleReferral(id)).after(() => enqueueMembershipMessage(id, 'confirmed', actor(req)));
+    work.add(audit(req, 'membership.created', 'membership', id, { planId: plan.id, startsOn: values.startsOn, endsOn }));
+    work.after(() => notifyNewMembership(id, actor(req)));
     await work.commit();
     res.status(201).json({ membership: (await membershipViews(eq(memberships.id, id)))[0] });
   });
@@ -336,12 +335,17 @@ export function membershipsRouter(): Router {
     const id = paramId(req, 'That membership');
     const [membership] = await membershipViews(and(eq(memberships.id, id), isNull(memberships.deletedAt)));
     if (!membership) throw notFound('That membership');
-    const [periods, players, receipts, referral, credits] = await Promise.all([
+    const [periods, players, receipts, credits, sent] = await Promise.all([
       db.select().from(membershipPeriods).where(eq(membershipPeriods.membershipId, id)).orderBy(desc(membershipPeriods.startsOn)),
       db.select().from(membershipPlayers).where(eq(membershipPlayers.membershipId, id)).orderBy(asc(membershipPlayers.createdAt)),
       db.select({ payment: payments }).from(payments).innerJoin(membershipPeriods, eq(payments.periodId, membershipPeriods.id)).where(eq(membershipPeriods.membershipId, id)).orderBy(desc(payments.receivedAt)),
-      db.select().from(referralCodes).where(eq(referralCodes.membershipId, id)),
       db.select().from(memberCredits).where(eq(memberCredits.membershipId, id)).orderBy(desc(memberCredits.createdAt)),
+      db
+        .select({ id: messages.id, channel: messages.channel, audience: messages.audience, fallbackOf: messages.fallbackOf, template: messages.template, status: messages.status, sentAt: messages.sentAt, createdAt: messages.createdAt, lastError: messages.lastError })
+        .from(messages)
+        .where(eq(messages.membershipId, id))
+        .orderBy(desc(messages.createdAt))
+        .limit(20),
     ]);
     const [plan] = await db.select({ playersPerCourt: membershipPlans.playersPerCourt }).from(membershipPlans).where(eq(membershipPlans.id, membership.planId));
     const withDue = await Promise.all(periods.map(async (p) => ({ ...p, paidPaise: await periodPaid(p.id) })));
@@ -351,9 +355,9 @@ export function membershipsRouter(): Router {
       players,
       playerLimit: membership.kind === 'court' ? plan!.playersPerCourt * membership.courts.length : null,
       payments: receipts.map((r) => r.payment),
-      referralCode: referral[0]?.code ?? null,
       credits,
       creditBalancePaise: credits.reduce((sum, c) => sum + c.amountPaise, 0),
+      messages: sent,
     });
   });
 
@@ -419,7 +423,7 @@ export function membershipsRouter(): Router {
       db.update(memberships).set({ endsOn: period.endsOn, updatedAt: new Date() }).where(and(eq(memberships.id, id), eq(memberships.endsOn, before.endsOn))),
       audit(req, 'membership.renewed', 'membership', id, period),
     );
-    await work.after(() => enqueueMembershipMessage(id, 'renewed', actor(req))).commit();
+    await work.after(() => notifyMembershipRenewed(id, actor(req))).commit();
     res.json({ membership: (await membershipViews(eq(memberships.id, id)))[0] });
   });
 
@@ -433,7 +437,8 @@ export function membershipsRouter(): Router {
       db.update(memberships).set({ status: 'cancelled', cancelReason, cancelledAt: new Date(), holdExpiresAt: null, updatedAt: new Date() }).where(eq(memberships.id, id)),
       audit(req, 'membership.cancelled', 'membership', id, { cancelReason }),
     ]);
-    if (before.status === 'active') await enqueueMembershipMessage(id, 'cancelled', actor(req));
+    // The member gets no message; the owner does (owner decision, 21 Nov 2026).
+    if (before.status === 'active') await notifyOwnerMembershipCancelled(id, cancelReason, actor(req));
     res.json({ membership: (await membershipViews(eq(memberships.id, id)))[0] });
   });
 
@@ -457,15 +462,6 @@ export function membershipsRouter(): Router {
       audit(req, 'membership.credit_adjusted', 'membership', id, values),
     ]);
     res.status(201).json({ credit });
-  });
-
-  router.post('/:id/remind', requirePermission('messages.manage'), async (req, res) => {
-    const id = paramId(req, 'That membership');
-    const before = await findMembership(id);
-    if (before.status !== 'active') throw invalid('Only a confirmed membership can be reminded.', 'NOT_ACTIVE');
-    const queued = await enqueueMembershipMessage(id, 'reminder', actor(req));
-    if (!queued) throw invalid('This member has no email address.', 'NO_EMAIL');
-    res.status(202).json({ queued: true });
   });
 
   /** Staff opened the WhatsApp reminder; logged with the member's messages, like an email would be. */
@@ -500,7 +496,6 @@ export function membershipsRouter(): Router {
       db.insert(payments).values(payment).returning(),
       auditEntry({ action: 'payment.recorded', actorStaffId: actor(req), entityType: 'payment', entityId: payment.id, newValues: payment, req }),
     ]);
-    await settleReferral(id);
     res.status(201).json({ payment: receipt });
   });
 

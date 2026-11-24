@@ -8,8 +8,6 @@ const PERMISSIONS = {
   'messages.manage': ['owner', 'manager', 'front_desk'],
   'memberships.view': ['owner', 'manager', 'front_desk'],
   'memberships.manage': ['owner', 'manager'],
-  'referrals.view': ['owner', 'manager', 'front_desk'],
-  'referrals.manage': ['owner', 'manager'],
   'payments.view': ['owner', 'manager'],
   'payments.record': ['owner', 'manager', 'front_desk'],
   'payments.void': ['owner', 'manager'],

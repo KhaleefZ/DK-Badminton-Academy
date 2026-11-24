@@ -3,6 +3,7 @@ import { and, desc, eq, gte, isNull, lt, sql } from 'drizzle-orm';
 import { z } from 'zod';
 import { db } from '../db/client.js';
 import { bookings, customers, membershipPeriods, memberships, paymentIssues, paymentMethod, payments } from '../db/schema.js';
+import { notifyOwnerRefund } from '../messages/notify.js';
 import { auditEntry, auditIfChanged } from '../lib/audit.js';
 import { AppError, invalid, notFound } from '../lib/errors.js';
 import { customerMatches, likeTerm, ilike } from '../lib/search.js';
@@ -85,7 +86,11 @@ export function paymentsRouter(): Router {
     const keys = await savedGatewayKeys();
     if (!keys) throw invalid('No payment gateway is set up, so this can’t be refunded here. Refund it from the gateway dashboard.', 'NO_GATEWAY');
     try {
-      res.json({ payment: await refundPayment(buildGateway(keys), receipt, reason, currentAuth(req).staff.id, amountPaise) });
+      const staffId = currentAuth(req).staff.id;
+      const refunded = await refundPayment(buildGateway(keys), receipt, reason, staffId, amountPaise);
+      // The owner hears about every refund on WhatsApp (customers don't: owner decision, 21 Nov 2026).
+      await notifyOwnerRefund({ amountPaise: refunded.refundedPaise - receipt.refundedPaise, receipt: receipt.receiptNo, bookingId: receipt.bookingId, periodId: receipt.periodId, reason, by: staffId });
+      res.json({ payment: refunded });
     } catch (err) {
       if (err instanceof GatewayError) throw new AppError(409, 'REFUND_FAILED', err.message);
       throw err;

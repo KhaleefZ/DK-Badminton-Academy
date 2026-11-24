@@ -17,6 +17,8 @@ import { useWorkspace } from '../store/WorkspaceContext';
 import { api } from '../lib/api';
 import { CUSTOMER_TYPES, formatDate, formatPaise } from '../lib/format';
 import { useResource } from '../lib/useResource';
+import ViewTabs from '../components/ViewTabs';
+import { PEOPLE } from '../layout/sections';
 
 const TYPE_OPTIONS = [{ value: 'all', label: 'All customers' }, ...Object.entries(CUSTOMER_TYPES).map(([value, label]) => ({ value, label }))];
 const VIEW_OPTIONS = [
@@ -54,7 +56,8 @@ export default function Customers() {
 
   return (
     <>
-      <PageHeader title="Customers" subtitle="Website and walk-in customers. Members are kept separately." action={<Button onClick={() => setDialog({ type: 'add' })}>Add customer</Button>} />
+      <PageHeader title={PEOPLE.label} subtitle="Website and walk-in customers. Members are on the Memberships tab." action={<Button onClick={() => setDialog({ type: 'add' })}>Add customer</Button>} />
+      <ViewTabs tabs={PEOPLE.tabs} label="Customers and memberships" />
 
       <KpiRow columns={3}>
         <KpiTile label="Walk-in" value={rows.filter((c) => c.type === 'walk_in').length} caption="WLK numbers, in this list" />

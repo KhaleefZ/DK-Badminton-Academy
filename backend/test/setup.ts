@@ -1,4 +1,4 @@
-import type { D1Database, R2Bucket } from '@cloudflare/workers-types';
+import type { D1Database, KVNamespace } from '@cloudflare/workers-types';
 import { getPlatformProxy } from 'wrangler';
 import { afterAll, beforeAll, beforeEach } from 'vitest';
 import { useDatabase } from '../src/db/client.js';
@@ -6,8 +6,38 @@ import { runMigrations, triggerSql } from '../src/db/migrate.js';
 import { usePhotos } from '../src/storage.js';
 
 // Each test file gets its own in-memory D1, run by the same engine as production.
-const proxy = await getPlatformProxy<{ DB: D1Database; PHOTOS: R2Bucket }>({ configPath: 'wrangler.jsonc', persist: false });
-const db = useDatabase(proxy.env.DB);
+const proxy = await getPlatformProxy<{ DB: D1Database; PHOTOS: KVNamespace }>({ configPath: 'wrangler.jsonc', persist: false });
+
+/**
+ * Cloudflare's D1 refuses a statement with more than 100 bound values, but the local engine allows
+ * thousands, so a query that works here could fail live. Every test now fails the same way D1 would.
+ * https://developers.cloudflare.com/d1/platform/limits/ (Maximum bound parameters per query: 100)
+ */
+export const D1_MAX_BOUND_PARAMETERS = 100;
+function withD1ParameterLimit(binding: D1Database): D1Database {
+  const guard = (stmt: any, sqlText = ''): any =>
+    new Proxy(stmt, {
+      get(target, prop) {
+        const value = Reflect.get(target, prop);
+        if (prop !== 'bind') return typeof value === 'function' ? value.bind(target) : value;
+        return (...params: unknown[]) => {
+          if (params.length > D1_MAX_BOUND_PARAMETERS) {
+            throw new Error(`D1 would refuse this statement: ${params.length} bound values (limit ${D1_MAX_BOUND_PARAMETERS}). SQL: ${sqlText.slice(0, 160)}`);
+          }
+          return guard(value.apply(target, params), sqlText);
+        };
+      },
+    });
+  return new Proxy(binding, {
+    get(target, prop) {
+      const value = Reflect.get(target, prop);
+      if (prop === 'prepare') return (sql: string) => guard(value.call(target, sql), sql);
+      return typeof value === 'function' ? value.bind(target) : value;
+    },
+  });
+}
+
+const db = useDatabase(withD1ParameterLimit(proxy.env.DB));
 usePhotos(proxy.env.PHOTOS);
 
 beforeAll(async () => {

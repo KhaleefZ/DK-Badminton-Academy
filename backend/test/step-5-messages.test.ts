@@ -104,14 +104,15 @@ describe('sender settings', () => {
 });
 
 describe('what gets queued', () => {
-  it('emails a customer when staff book, change, cancel and restore', async () => {
+  it('emails a customer (WhatsApp being off) when staff book, cancel and restore, but not when they move it', async () => {
     const booking = await book();
     await admin('patch', `/bookings/${booking.id}`).send(slot({ notes: 'Note only' })).expect(200);
     expect(await rows()).toHaveLength(1);
     await admin('patch', `/bookings/${booking.id}`).send(slot({ start: '07:00', end: '08:00' })).expect(200);
     await admin('post', `/bookings/${booking.id}/cancel`).send({}).expect(200);
     await admin('post', `/bookings/${booking.id}/restore`).expect(200);
-    expect((await rows()).map((m) => m.template)).toEqual(['booking_confirmed', 'booking_changed', 'booking_cancelled', 'booking_confirmed']);
+    // Moves aren't messaged (owner decision, 21 Nov 2026).
+    expect((await rows()).map((m) => m.template)).toEqual(['booking_confirmed', 'booking_cancelled', 'booking_confirmed']);
   });
 
   it('skips customers with no email, and saves nothing if the booking fails', async () => {
@@ -161,7 +162,7 @@ describe('sending', () => {
     const [waiting] = await rows();
     expect(waiting!.body).toContain('{{link}}');
     expect(waiting!.body).not.toContain('/booking/status/');
-    expect(await processMessages(mailer)).toEqual({ sent: 1, failed: 0 });
+    expect(await processMessages(mailer)).toMatchObject({ sent: 1, failed: 0 });
     const link = bookingLink(booking.id);
     expect(sent[0]!.text).toContain(link);
     expect(sent[0]!.text).toContain(booking.bookingNo);
@@ -183,9 +184,9 @@ describe('sending', () => {
   it('waits while no sender is ready, then sends', async () => {
     await book();
     const notReady: Mailer = { ...mailer, ready: async () => false };
-    expect(await processMessages(notReady)).toEqual({ sent: 0, failed: 0 });
+    expect(await processMessages(notReady)).toMatchObject({ sent: 0, failed: 0 });
     expect((await rows())[0]).toMatchObject({ status: 'queued', attempts: 0 });
-    expect(await processMessages(mailer)).toEqual({ sent: 1, failed: 0 });
+    expect(await processMessages(mailer)).toMatchObject({ sent: 1, failed: 0 });
   });
 
   it('holds email while it’s switched off', async () => {

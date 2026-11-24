@@ -100,7 +100,20 @@ export const MESSAGE_LABELS = {
   membership_renewed: 'Membership renewed',
   membership_cancelled: 'Membership cancelled',
   membership_reminder: 'Renewal reminder',
+  owner_new_booking: 'Owner: new booking',
+  owner_new_membership: 'Owner: new membership',
+  owner_membership_cancelled: 'Owner: membership cancelled',
+  owner_refund: 'Owner: refund',
 };
+export const CHANNEL_LABELS = { whatsapp: 'WhatsApp', email: 'Email' };
+
+/** A WhatsApp chat link for a phone number. A plain 10-digit number, or one with India's leading 0, is taken as Indian. */
+export function whatsappChatUrl(phone, text = '') {
+  let digits = String(phone ?? '').replace(/\D/g, '').replace(/^00/, '');
+  if (/^0\d{10}$/.test(digits)) digits = digits.slice(1);
+  if (digits.length === 10) digits = `91${digits}`;
+  return `https://wa.me/${digits}${text ? `?text=${encodeURIComponent(text)}` : ''}`;
+}
 export const MESSAGE_STATUS = { queued: 'Waiting', sending: 'Sending', sent: 'Sent', failed: 'Failed', expired: 'Too late', cancelled: 'Cancelled' };
 export const MESSAGE_TONES = { queued: 'warning', sending: 'warning', sent: 'success', failed: 'danger', expired: 'tint', cancelled: 'tint' };
 

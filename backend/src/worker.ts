@@ -1,5 +1,6 @@
 // The Cloudflare Worker: the Express app answers HTTP requests, and Cron Triggers (see wrangler.jsonc)
-// send queued emails, ask the payment gateway about unconfirmed orders and back up the database.
+// send queued messages and ask the payment gateway about unconfirmed orders. Weekly database backups run
+// outside Cloudflare, in GitHub Actions (.github/workflows/database-backup.yml).
 import { httpServerHandler } from 'cloudflare:node';
 import { env } from 'cloudflare:workers';
 import { createApp } from './app.js';
@@ -9,7 +10,6 @@ import { bindingLimiter } from './lib/rateLimit.js';
 import { processMessages } from './messages/queue.js';
 import { sweepGatewayOrders } from './payments/settle.js';
 import { usePhotos } from './storage.js';
-import { BACKUP_CRON, backUpDatabase } from './backup.js';
 
 useDatabase(env.DB);
 usePhotos(env.PHOTOS);
@@ -24,9 +24,8 @@ const app = createApp({
  * What one Cron Trigger run does. Cloudflare's free plan allows 50 database queries and about 10 ms of
  * CPU per run, so the every-minute job takes turns: payment checks on even minutes, emails on odd ones.
  */
-export async function scheduledWork(cron: string, at: Date) {
+export async function scheduledWork(_cron: string, at: Date) {
   const report = (what: string) => (err: unknown) => console.error(`${what}:`, err instanceof Error ? err.message : err);
-  if (cron === BACKUP_CRON) return backUpDatabase(env, at).catch(report('Backup'));
   if (at.getUTCMinutes() % 2 === 0) return sweepGatewayOrders(at).catch(report('Payment check'));
   return processMessages(mailer, at).catch(report('Message queue'));
 }

@@ -13,10 +13,14 @@ export const membershipToken = (membershipId: string) => createHmac('sha256', `m
 
 export const membershipLink = (membershipId: string) => `${config.WEBSITE_ORIGIN}/membership/status/${membershipToken(membershipId)}`;
 
-/** wa.me wants digits with the country code. A plain 10-digit number is taken as Indian. */
+/**
+ * WhatsApp wants digits with the country code. A plain 10-digit number, or one written with India's
+ * leading 0 (09876543210), is taken as Indian; anything else is kept as given (00 prefix removed).
+ */
 export function whatsappDigits(phone: string): string {
-  const digits = phone.replace(/\D/g, '').replace(/^00/, '');
-  return digits.length === 10 ? `91${digits}` : digits.replace(/^0/, '');
+  let digits = phone.replace(/\D/g, '').replace(/^00/, '');
+  if (/^0\d{10}$/.test(digits)) digits = digits.slice(1);
+  return digits.length === 10 ? `91${digits}` : digits;
 }
 
 type BookingForLink = {

@@ -3,19 +3,18 @@ import { and, asc, eq, gt, sql } from 'drizzle-orm';
 import { z } from 'zod';
 import { hashToken } from '../auth/crypto.js';
 import { db, previousChanged, runBatch, Work } from '../db/client.js';
-import { courtReservations, memberBatches, membershipCourts, membershipPeriods, membershipPlans, memberships, nextNumber, payments, referralCodes, referralProgram, settings, courts } from '../db/schema.js';
+import { courtReservations, memberBatches, membershipCourts, membershipPeriods, membershipPlans, memberships, nextNumber, payments, settings, courts } from '../db/schema.js';
 import { auditEntry } from '../lib/audit.js';
 import { AppError, invalid, notFound } from '../lib/errors.js';
 import { addDays, isDate, monthEnd, toMinutes, venueToday } from '../lib/time.js';
 import { parseBody, UUID } from '../lib/validate.js';
-import { claimReferral, describeOffer, discountFor, ensureMemberCode, loadProgram, recordRedemption, settleReferral, validateCode } from '../memberships/referrals.js';
 import { addPeriod, releaseFutureBlocks, startCourtBlocks, takeBatchSeat } from '../memberships/service.js';
 import { membershipToken } from '../messages/links.js';
-import { enqueueMembershipMessage, enqueueStaffMembershipAlert } from '../messages/queue.js';
+import { notifyNewMembership } from '../messages/notify.js';
 import { releaseExpiredHolds } from '../schedule/availability.js';
 import { batchViews } from './memberships.js';
 import { onlinePayments, paymentInfo, webhookUrl } from '../payments/gateway.js';
-import { startMembershipCheckout, syncOrder } from '../payments/settle.js';
+import { startMembershipCheckout, checkOrderNow } from '../payments/settle.js';
 
 const MAX_LIVE_HOLDS = 2;
 const LATEST_START_DAYS = 30;
@@ -32,14 +31,12 @@ const joinRequest = z.object({
     .string({ error: 'Enter a phone number.' })
     .transform((v) => v.replace(/[\s-]/g, '').replace(/^(\+91|0091|0)/, ''))
     .refine((v) => /^[6-9]\d{9}$/.test(v), 'Enter a valid 10-digit mobile number.'),
-  email: z.string({ error: 'Enter an email address.' }).trim().toLowerCase().email('Enter a valid email address.').max(254),
-  referralCode: z.string().trim().max(30).nullish().transform((v) => v || null),
+  // Phone is how members are reached (WhatsApp); email is optional, used only as a fallback.
+  email: z
+    .union([z.literal(''), z.string().trim().toLowerCase().email('Enter a valid email address.').max(254)])
+    .nullish()
+    .transform((v) => v || null),
   website: z.string().max(0, 'This request was blocked.').optional(),
-});
-
-const referralCheck = z.object({
-  code: z.string({ error: 'Enter a code.' }).trim().min(1, 'Enter a code.').max(30),
-  pricePaise: z.number().int().min(0).max(100_000_000),
 });
 
 const onlineOff = () => new AppError(503, 'ONLINE_BOOKING_OFF', 'Online joining isn’t available yet. Please contact the academy.');
@@ -53,13 +50,11 @@ async function byToken(token: string) {
     .where(eq(memberships.accessTokenHash, hashToken(token)));
   if (!row) throw notFound('That membership');
   const [first] = await db.select().from(membershipPeriods).where(eq(membershipPeriods.membershipId, row.membership.id)).orderBy(asc(membershipPeriods.startsOn)).limit(1);
-  const [code] = await db.select({ code: referralCodes.code }).from(referralCodes).where(eq(referralCodes.membershipId, row.membership.id));
-  const [program] = await db.select({ enabled: referralProgram.enabled }).from(referralProgram);
-  return { ...row, first: first!, referralCode: program?.enabled ? (code?.code ?? null) : null };
+  return { ...row, first: first! };
 }
 
 /** Only what the holder of the private link needs. */
-function publicView({ membership: m, planName, first, referralCode }: Awaited<ReturnType<typeof byToken>>) {
+function publicView({ membership: m, planName, first }: Awaited<ReturnType<typeof byToken>>) {
   const live = m.status === 'pending_payment' && m.holdExpiresAt! > new Date();
   return {
     membershipNo: m.membershipNo,
@@ -71,9 +66,7 @@ function publicView({ membership: m, planName, first, referralCode }: Awaited<Re
     startsOn: m.startsOn,
     endsOn: m.endsOn,
     amountPaise: first.amountPaise,
-    discountPaise: first.discountPaise,
     monthlyPaise: m.pricePaise,
-    referralCode: m.status === 'active' ? referralCode : null,
   };
 }
 
@@ -96,11 +89,8 @@ async function confirmHeldMembership(membershipId: string, req: Request, method:
   await runBatch([
     ...(method && period!.amountPaise > 0 ? [db.insert(payments).values({ periodId: period!.id, amountPaise: period!.amountPaise, method, reference: 'Test mode' })] : []),
     auditEntry({ action: 'membership.confirmed_online', entityType: 'membership', entityId: confirmed.id, req }),
-    ensureMemberCode(confirmed.id),
   ]);
-  await settleReferral(confirmed.id);
-  await enqueueMembershipMessage(confirmed.id, 'confirmed');
-  await enqueueStaffMembershipAlert(confirmed.id);
+  await notifyNewMembership(confirmed.id);
 }
 
 export function publicMembershipRoutes(router: Router, writeLimiter: RequestHandler) {
@@ -113,10 +103,8 @@ export function publicMembershipRoutes(router: Router, writeLimiter: RequestHand
       db.select({ id: courts.id, name: courts.name }).from(courts).where(eq(courts.active, true)).orderBy(asc(courts.sortOrder)),
       db.select().from(settings).where(eq(settings.id, 1)),
     ]);
-    const program = await loadProgram();
     const payment = paymentInfo(await onlinePayments());
     res.json({
-      referralsEnabled: program.enabled,
       onlineJoining: payment.online,
       testMode: payment.testMode,
       today,
@@ -132,13 +120,6 @@ export function publicMembershipRoutes(router: Router, writeLimiter: RequestHand
     });
   });
 
-  // Rate limited with the other writes, so codes can't be guessed by trying thousands.
-  router.post('/referrals/check', writeLimiter, async (req, res) => {
-    const { code, pricePaise } = parseBody(referralCheck, req.body);
-    const program = await loadProgram();
-    await validateCode(code, program);
-    res.json({ discountPaise: discountFor(program, pricePaise), offer: describeOffer(program) });
-  });
 
   router.post('/memberships', writeLimiter, async (req, res) => {
     if ((await onlinePayments()).kind === 'off') throw onlineOff();
@@ -157,7 +138,17 @@ export function publicMembershipRoutes(router: Router, writeLimiter: RequestHand
       const [{ live }] = (await db
         .select({ live: sql<number>`count(*)` })
         .from(memberships)
-        .where(and(eq(memberships.email, v.email), eq(memberships.status, 'pending_payment'), gt(memberships.holdExpiresAt, new Date())))) as [{ live: number }];
+        // Same person = same phone (or the same email, when they gave one). The status and hold
+        // conditions use the hold index, so this stays a small read on Cloudflare's free plan.
+        .where(
+          and(
+            eq(memberships.status, 'pending_payment'),
+            gt(memberships.holdExpiresAt, new Date()),
+            v.email
+              ? sql`(substr(${memberships.phoneDigits}, -10) = ${v.phone.slice(-10)} OR lower(${memberships.email}) = ${v.email})`
+              : sql`substr(${memberships.phoneDigits}, -10) = ${v.phone.slice(-10)}`,
+          ),
+        )) as [{ live: number }];
       if (live >= MAX_LIVE_HOLDS) throw new AppError(409, 'TOO_MANY_HOLDS', 'You already have memberships waiting for payment. Finish or release those first.');
 
       const endsOn = monthEnd(v.startsOn);
@@ -180,10 +171,8 @@ export function publicMembershipRoutes(router: Router, writeLimiter: RequestHand
         if (!v.batchId) throw invalid('Choose a batch.');
         const batch = await takeBatchSeat(v.batchId, v.startsOn, endsOn);
         if (batch.planId !== plan.id) throw invalid('That batch belongs to another plan.', 'WRONG_PLAN');
-        const referral = await claimReferral(v.referralCode, { phone: v.phone, email: v.email, pricePaise: plan.pricePaise });
         work.add(db.insert(memberships).values({ ...base, batchId: batch.id, pricePaise: plan.pricePaise, membershipNo: nextNumber('MEM-', 4) }));
-        addPeriod(work, id, v.startsOn, endsOn, plan.pricePaise - (referral?.discountPaise ?? 0), { discountPaise: referral?.discountPaise ?? 0 });
-        recordRedemption(work, id, referral);
+        addPeriod(work, id, v.startsOn, endsOn, plan.pricePaise);
       } else {
         const courtIds = [...new Set(v.courtIds ?? [])];
         const days = [...new Set(v.days ?? [])].sort();
@@ -193,12 +182,10 @@ export function publicMembershipRoutes(router: Router, writeLimiter: RequestHand
         if (startMinute === null) throw invalid('Choose a time.');
         const time = { days, startMinute, endMinute: startMinute + venue!.slotMinutes };
         const pricePaise = plan.pricePaise * courtIds.length;
-        const referral = await claimReferral(v.referralCode, { phone: v.phone, email: v.email, pricePaise });
         work.add(db.insert(memberships).values({ ...base, ...time, pricePaise, membershipNo: nextNumber('CRT-', 4) }));
         work.add(db.insert(membershipCourts).values(courtIds.map((courtId) => ({ membershipId: id, courtId }))));
         await startCourtBlocks(work, id, courtIds, time, v.startsOn, endsOn);
-        addPeriod(work, id, v.startsOn, endsOn, pricePaise - (referral?.discountPaise ?? 0), { discountPaise: referral?.discountPaise ?? 0 });
-        recordRedemption(work, id, referral);
+        addPeriod(work, id, v.startsOn, endsOn, pricePaise);
       }
       work.add(auditEntry({ action: 'membership.held_online', entityType: 'membership', entityId: id, req }));
     }
@@ -234,7 +221,7 @@ export function publicMembershipRoutes(router: Router, writeLimiter: RequestHand
     const online = await onlinePayments();
     const { membership } = await byToken(token);
     if (online.kind === 'gateway' && membership.gatewayOrderId && (membership.status === 'pending_payment' || membership.status === 'expired')) {
-      await syncOrder(online.gateway, membership.gatewayOrderId);
+      await checkOrderNow(online.gateway, membership.gatewayOrderId);
     }
     await releaseExpiredHolds();
     res.json({ membership: publicView(await byToken(token)) });

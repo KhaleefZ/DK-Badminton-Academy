@@ -56,7 +56,7 @@ export default function CustomerDialog({ customer, onClose, onSaved }) {
       )}
       <div className="form-grid">
         <Field label="Full name" required autoComplete="off" value={form.name} onChange={set('name')} error={submitted ? errors.name : undefined} />
-        <Field label="Phone" type="tel" required autoComplete="off" value={form.phone} onChange={set('phone')} error={submitted ? errors.phone : undefined} />
+        <Field label="Phone (WhatsApp)" type="tel" required autoComplete="off" value={form.phone} onChange={set('phone')} error={submitted ? errors.phone : undefined} />
         <div className="form-grid__full">
           <Field label="Email (optional)" type="email" autoComplete="off" value={form.email} onChange={set('email')} />
         </div>

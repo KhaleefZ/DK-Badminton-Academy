@@ -25,7 +25,9 @@ const stateOf = async (id: string) => (await db.select().from(staff).where(eq(st
 
 describe('permissions table', () => {
   it('matches the agreed roles', () => {
-    expect(permissionsFor('owner')).toHaveLength(16);
+    // 14 since referrals were removed (24 Nov 2026): no role has referrals.view or referrals.manage.
+    expect(permissionsFor('owner')).toHaveLength(14);
+    expect(permissionsFor('owner').some((p) => p.startsWith('referrals.'))).toBe(false);
     expect(can('manager', 'memberships.manage')).toBe(true);
     expect(can('front_desk', 'payments.record')).toBe(true);
     expect(can('front_desk', 'payments.void')).toBe(false);
@@ -37,7 +39,6 @@ describe('permissions table', () => {
     expect(can('front_desk', 'bookings.manage')).toBe(true);
     expect(can('front_desk', 'memberships.view')).toBe(true);
     expect(can('front_desk', 'memberships.manage')).toBe(false);
-    expect(can('front_desk', 'referrals.manage')).toBe(false);
     expect(can('front_desk', 'payments.view')).toBe(false);
     expect(can('front_desk', 'reports.view')).toBe(false);
     expect(can('front_desk', 'refunds.manage')).toBe(false);

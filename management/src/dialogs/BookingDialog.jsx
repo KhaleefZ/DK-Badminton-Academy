@@ -149,7 +149,7 @@ export default function BookingDialog({ booking, defaults = {}, onClose, onSaved
       as="form"
       onSubmit={submit}
       title={booking ? `Edit ${booking.bookingNo}` : 'Add booking'}
-      description={booking ? `${booking.customer.name} · ${booking.customer.customerNo}` : 'No message is sent to the customer yet.'}
+      description={booking ? `${booking.customer.name} · ${booking.customer.customerNo}` : 'The customer is sent a confirmation (WhatsApp, or email as a backup), and the owner numbers are told.'}
       onClose={onClose}
       footer={
         <>

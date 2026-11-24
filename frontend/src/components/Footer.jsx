@@ -43,6 +43,13 @@ export default function Footer() {
         {footer.contactLine && <p className="fine">{footer.contactLine}</p>}
         <div className="site-footer__legal">
           {footer.showStaffLogin && <a href={managementUrl}>{footer.staffLoginLabel}</a>}
+          {/* Studio credit: always last, on the right of the bottom line. Not editable in the admin panel. */}
+          <p className="site-footer__credit">
+            Designed &amp; built by{' '}
+            <a href="https://haizotech.com" target="_blank" rel="noopener" aria-label="HaizoTech (opens in a new tab)">
+              HaizoTech
+            </a>
+          </p>
         </div>
       </div>
     </footer>

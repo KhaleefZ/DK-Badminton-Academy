@@ -1,31 +1,15 @@
-import { NavLink } from 'react-router-dom';
-import {
-  BadgeCheck,
-  BarChart2,
-  Calendar,
-  Contact,
-  Gift,
-  Globe,
-  LayoutGrid,
-  LogOut,
-  Mail,
-  MessageSquare,
-  Settings,
-  ShieldCheck,
-  Users,
-  Wallet,
-} from 'lucide-react';
+import { NavLink, useLocation } from 'react-router-dom';
+import { BarChart2, Calendar, Contact, Globe, LayoutGrid, LogOut, MessageSquare, Settings, ShieldCheck, Users, Wallet } from 'lucide-react';
 import { useAuth, useCan } from '../auth/AuthContext';
+import { INBOX, PEOPLE, inSection } from './sections';
 
+// A grouped item (`section`) opens its first tab the staff member may see, and stays highlighted on any of its tabs.
 const NAV = [
   { to: '/', label: 'Overview', icon: LayoutGrid, end: true },
   { to: '/bookings', label: 'Bookings', icon: Calendar },
-  { to: '/customers', label: 'Customers', icon: Contact },
-  { to: '/enquiries', label: 'Enquiries', icon: MessageSquare, permission: 'enquiries.manage' },
-  { to: '/messages', label: 'Messages', icon: Mail, permission: 'messages.manage' },
-  { to: '/memberships', label: 'Memberships', icon: BadgeCheck, end: true },
+  { section: PEOPLE, icon: Contact },
   { to: '/memberships/setup', label: 'Plans & batches', icon: Users },
-  { to: '/referrals', label: 'Referrals', icon: Gift, permission: 'referrals.view' },
+  { section: INBOX, icon: MessageSquare },
   { to: '/payments', label: 'Payments', icon: Wallet, permission: 'payments.view' },
   { to: '/reports', label: 'Reports', icon: BarChart2, permission: 'reports.view' },
   { to: '/website', label: 'Website', icon: Globe, permission: 'website.manage' },
@@ -37,6 +21,12 @@ const NAV = [
 export default function Sidebar({ open, onNavigate }) {
   const { signOut } = useAuth();
   const can = useCan();
+  const { pathname } = useLocation();
+  const items = NAV.flatMap((item) => {
+    if (!item.section) return !item.permission || can(item.permission) ? [item] : [];
+    const first = item.section.tabs.find((tab) => !tab.permission || can(tab.permission));
+    return first ? [{ to: first.to, label: item.section.label, icon: item.icon, active: inSection(item.section, pathname) }] : [];
+  });
 
   return (
     <aside id="sidebar" className={`sidebar${open ? ' is-open' : ''}`}>
@@ -48,8 +38,16 @@ export default function Sidebar({ open, onNavigate }) {
       </div>
 
       <nav className="sidebar__nav" aria-label="Management">
-        {NAV.filter(({ permission }) => !permission || can(permission)).map(({ to, label, icon: Icon, end }) => (
-          <NavLink key={to} to={to} end={end} className="sidebar__item" onClick={onNavigate}>
+        {items.map(({ to, label, icon: Icon, end, active }) => (
+          <NavLink
+            key={label}
+            to={to}
+            end={end}
+            // A grouped item decides its own highlight, so it stays lit on either of its tabs.
+            className={({ isActive }) => `sidebar__item${(active ?? isActive) ? ' active' : ''}`}
+            aria-current={active ? 'page' : undefined}
+            onClick={onNavigate}
+          >
             <Icon size={18} strokeWidth={1.8} aria-hidden="true" />
             <span>{label}</span>
           </NavLink>

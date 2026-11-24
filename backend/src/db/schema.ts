@@ -412,7 +412,21 @@ export const messageSettings = sqliteTable(
     appPasswordEncrypted: text('app_password_encrypted'),
     notifyEmail: text('notify_email'),
     dailyEmailLimit: integer('daily_email_limit').notNull().default(100),
+    // The academy's number for "Message us on WhatsApp" links on the website (click-to-chat, free).
     whatsappNumber: text('whatsapp_number'),
+    // Automatic WhatsApp through Meta's WhatsApp Cloud API, set up by the Owner in Settings.
+    // Off until the Owner saves working keys; while off, customers get the fallback email (if they gave one).
+    whatsappEnabled: flag('whatsapp_enabled').notNull().default(false),
+    whatsappPhoneNumberId: text('whatsapp_phone_number_id'),
+    whatsappTokenEncrypted: text('whatsapp_token_encrypted'),
+    whatsappBusinessAccountId: text('whatsapp_business_account_id'),
+    whatsappTemplateLanguage: text('whatsapp_template_language').notNull().default('en'),
+    // Approved template names by message, e.g. { booking_confirmed: 'dk_booking_confirmed' }. Null = the built-in names.
+    whatsappTemplates: json<Record<string, string>>('whatsapp_templates'),
+    // Numbers that get the owner messages (new booking, new membership, membership cancelled, refund).
+    ownerWhatsappNumbers: json<string[]>('owner_whatsapp_numbers'),
+    // A cost guard like the email cap: automatic WhatsApp messages stop for the day past this.
+    dailyWhatsappLimit: integer('daily_whatsapp_limit').notNull().default(200),
     updatedAt: createdNow('updated_at'),
   },
   (t) => [check('message_settings_single_row', sql`${t.id} = 1`)],
@@ -442,6 +456,13 @@ export const messages = sqliteTable(
     sentAt: timestamp('sent_at'),
     createdBy: text('created_by').references(() => staff.id, { onDelete: 'set null' }),
     createdAt: createdNow('created_at'),
+    // For WhatsApp: the template's values, kept so a retry, or the fallback email, uses exactly the same details.
+    // The private link is never stored here; it's added at send time, as with emails.
+    templateParams: json<Record<string, string | number | null>>('template_params'),
+    // 'customer' or 'owner'. Only customer messages fall back to email.
+    audience: text('audience').notNull().default('customer'),
+    // On a fallback email: the WhatsApp message it replaced. (No foreign key, so adding it needs no table rebuild.)
+    fallbackOf: text('fallback_of'),
   },
   (t) => [
     index('messages_queue_idx').on(t.status, t.nextAttemptAt),
@@ -684,7 +705,7 @@ export const siteContent = sqliteTable(
   (t) => [check('site_content_single_row', sql`${t.id} = 1`)],
 );
 
-/** Photos uploaded for the website. The file itself is in R2 under photos/<id>; this row lists it. */
+/** Photos uploaded for the website. The file itself is in Workers KV under photos/<id>; this row lists it. */
 export const siteImages = sqliteTable('site_images', {
   id: id(),
   contentType: text('content_type').notNull(),

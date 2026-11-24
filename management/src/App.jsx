@@ -22,7 +22,6 @@ import Enquiries from './pages/Enquiries';
 import Messages from './pages/Messages';
 import Memberships from './pages/Memberships';
 import MembershipSetup from './pages/MembershipSetup';
-import Referrals from './pages/Referrals';
 import Payments from './pages/Payments';
 import Reports from './pages/Reports';
 import NotFound from './pages/NotFound';
@@ -62,7 +61,7 @@ const router = createBrowserRouter([
       { path: 'members', element: <Navigate to="/memberships" replace /> },
       { path: 'memberships', element: <Memberships /> },
       { path: 'memberships/setup', element: <MembershipSetup /> },
-      { path: 'referrals', element: <Referrals /> },
+      { path: 'referrals', element: <Navigate to="/memberships" replace /> },
       {
         path: 'payments',
         element: (

@@ -57,18 +57,15 @@ export default function JoinForm({ options, loadError, planId, onPlanChange }) {
   const [agreed, setAgreed] = useState(false);
   const [touched, setTouched] = useState(false);
   const [trap, setTrap] = useState('');
-  const [code, setCode] = useState('');
-  const [applied, setApplied] = useState(null);
-  const [codeError, setCodeError] = useState('');
   const [pending, setPending] = useState(false);
   const [error, setError] = useState('');
 
   const plan = options?.plans.find((p) => p.id === planId);
   const batches = options?.batches.filter((b) => b.planId === planId) ?? [];
-  const errors = validateDetails(details, { emailRequired: true });
+  // Phone first: membership updates go on WhatsApp, and email is an optional backup.
+  const errors = validateDetails(details);
   const choiceMissing = !plan || (plan.kind === 'individual' ? !batchId : !courtIds.length || !days.length || !start);
   const total = plan ? plan.pricePaise * (plan.kind === 'court' ? Math.max(courtIds.length, 1) : 1) : null;
-  const discount = applied ? Math.min(total ?? 0, applied.discountPaise) : 0;
   const toggle = (list, setList, value) => setList(list.includes(value) ? list.filter((x) => x !== value) : [...list, value]);
   const bind = (field) => ({ value: details[field], onChange: (e) => setDetails((d) => ({ ...d, [field]: e.target.value })), error: touched ? errors[field] : undefined });
 
@@ -77,22 +74,6 @@ export default function JoinForm({ options, loadError, planId, onPlanChange }) {
     setBatchId(null);
     setError('');
   }, [planId]);
-
-  // The price can change with the plan or courts, so a checked code is checked again then.
-  useEffect(() => {
-    setApplied(null);
-  }, [planId, courtIds.length]);
-
-  const applyCode = async () => {
-    setCodeError('');
-    setApplied(null);
-    if (!code.trim() || total === null) return;
-    try {
-      setApplied(await api('/referrals/check', { method: 'POST', body: { code, pricePaise: total } }));
-    } catch (err) {
-      setCodeError(err.message);
-    }
-  };
 
   const submit = async (e) => {
     e.preventDefault();
@@ -107,7 +88,7 @@ export default function JoinForm({ options, loadError, planId, onPlanChange }) {
     try {
       const { name, phone, email } = details;
       const choice = plan.kind === 'individual' ? { batchId } : { courtIds, days, start };
-      const { token } = await api('/memberships', { method: 'POST', body: { planId, startsOn, name, phone, email, website: trap, referralCode: applied ? code : null, ...choice } });
+      const { token } = await api('/memberships', { method: 'POST', body: { planId, startsOn, name, phone, email, website: trap, ...choice } });
       navigate(`/membership/status/${token}`);
     } catch (err) {
       setError(err.message);
@@ -199,7 +180,7 @@ export default function JoinForm({ options, loadError, planId, onPlanChange }) {
         <div className="form-grid">
           <Field label={text.nameLabel} required autoComplete="name" {...bind('name')} />
           <Field label={text.phoneLabel} required type="tel" inputMode="tel" autoComplete="tel" {...bind('phone')} />
-          <Field label={text.emailLabel} required type="email" autoComplete="email" hint={text.emailHint} {...bind('email')} />
+          <Field label={text.emailLabel} type="email" inputMode="email" autoComplete="email" maxLength={254} hint={text.emailHint} {...bind('email')} />
           <Field label={text.startDateLabel} type="date" required min={options?.today} max={options?.latestStart} value={startsOn} onChange={(e) => setStartsOn(e.target.value)} />
         </div>
         <div className="visually-hidden" aria-hidden="true">
@@ -208,30 +189,6 @@ export default function JoinForm({ options, loadError, planId, onPlanChange }) {
             <input tabIndex={-1} autoComplete="off" value={trap} onChange={(e) => setTrap(e.target.value)} />
           </label>
         </div>
-        {options?.referralsEnabled && (
-          <div className="membership-code">
-            <Field
-              label={text.codeLabel}
-              autoComplete="off"
-              maxLength={30}
-              value={code}
-              error={codeError || undefined}
-              onChange={(e) => {
-                setCode(e.target.value);
-                setApplied(null);
-                setCodeError('');
-              }}
-            />
-            <Button variant="secondary" icon={false} onClick={applyCode}>
-              {text.codeButton}
-            </Button>
-            {applied && (
-              <p className="small" role="status">
-                Code applied: {applied.offer}. You save {formatPaise(discount)}.
-              </p>
-            )}
-          </div>
-        )}
         <fieldset className="ack-box">
           <legend className="visually-hidden">Agreement</legend>
           <label className="checkbox">
@@ -247,7 +204,7 @@ export default function JoinForm({ options, loadError, planId, onPlanChange }) {
         )}
         <div className="button-row">
           <Button type="submit" icon={false} className="join-submit" disabled={pending || !options?.onlineJoining} aria-busy={pending}>
-            {pending ? text.submittingButton : `${text.submitButton} · ${formatPaise(total - discount)}`}
+            {pending ? text.submittingButton : `${text.submitButton} · ${formatPaise(total)}`}
           </Button>
         </div>
       </Step>

@@ -15,6 +15,8 @@ import { useWorkspace } from '../store/WorkspaceContext';
 import { api } from '../lib/api';
 import { formatInstant } from '../lib/format';
 import { useResource } from '../lib/useResource';
+import ViewTabs from '../components/ViewTabs';
+import { INBOX } from '../layout/sections';
 
 const STATUS_OPTIONS = [
   { value: 'all', label: 'All enquiries' },
@@ -123,7 +125,8 @@ export default function Enquiries() {
 
   return (
     <>
-      <PageHeader title="Enquiries" subtitle="Questions sent from the website’s contact form." />
+      <PageHeader title={INBOX.label} subtitle="Questions sent from the website’s contact form." />
+      <ViewTabs tabs={INBOX.tabs} label="Enquiries and messages" />
 
       <FilterBar>
         <SearchFilter label="Search name, email, phone, message or number" value={query} onChange={setQuery} />
